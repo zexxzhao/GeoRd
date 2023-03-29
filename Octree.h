@@ -83,7 +83,7 @@ struct Box3D {
 		std::swap(this->box_pos, box.box_pos);
 	}
 
-	[[deprecated]] void set_point(Point pa,Point pb){
+	[[deprecated]] void set_point(Point pa,Point3D pb){
 		this->box_pos[0] = pa;
 		this->box_pos[1] = pb;
 	}
@@ -96,10 +96,10 @@ struct Box3D {
 	}
 
 	[[deprecated]] void print_box() const {
-		std::cout << "Box Point 0: " << this->box_pos[0].x() << " , "
+		std::cout << "Box Point3D 0: " << this->box_pos[0].x() << " , "
 				  << this->box_pos[0].y() << " , " 
 				  << this->box_pos[0].z() << std::endl;
-		std::cout << "Box Point 1: " << this->box_pos[1].x() << " , "
+		std::cout << "Box Point3D 1: " << this->box_pos[1].x() << " , "
 				  << this->box_pos[1].y() << " , "
 				  << this->box_pos[1].z() << std::endl;
 		std::cout << std::endl;
@@ -171,7 +171,7 @@ struct Octree<Point3D, _Tag> {
 		}
 	}
 
-	void insert_point_help(Point pcur, int point_id, int level, Box3D box_cur, TreeNode& cur){
+	void insert_point_help(Point3D pcur, int point_id, int level, Box3D box_cur, TreeNode& cur){
 		int is_in_box;
 		Box3D box_sub;
 
@@ -206,14 +206,14 @@ struct Octree<Point3D, _Tag> {
 			}
 		}
 	}
-	void search_point(Point pcur, int& index, double& rval) {
+	void search_point(Point3D pcur, int& index, double& rval) {
 		index= 0;
 		rval = (pcur - this->pdat[0]).norm();
 		search_point_help(pcur, 0, this->root, this->box_cor, index, rval);
 	}
 
 
-	void search_point_help(Point pcur, int level,
+	void search_point_help(Point3D pcur, int level,
 						   TreeNode& cur, Box3D box_cur,
 							int& index, double& rval){
 		Box3D box_sub;
@@ -343,10 +343,10 @@ inline Box3D get_tri_bounding_box(Triangle3D tri){
 }
 
 inline bool box_box_intersect(const Box3D &box1, const Box3D &box2){
-	Point box1_center;
-	Point box2_center;
-	Point wid_avg;
-	Point dist_abs;
+	Point3D box1_center;
+	Point3D box2_center;
+	Point3D wid_avg;
+	Point3D dist_abs;
 
 	box1_center = (box1.box_pos[1] + box1.box_pos[0])/2.0;
 	box2_center = (box2.box_pos[1] + box2.box_pos[0])/2.0;
@@ -367,12 +367,12 @@ inline Box3D cal_sub_box(const Box3D &box, int nk){
 	b[1]=(nk - b[2]*4         )/2;
 	b[0]=(nk - b[2]*4 - b[1]*2)/1;
 
-	Point pa =  box.box_pos[0];
-	Point pb = (box.box_pos[1]+box.box_pos[0])/2.0;
-	Point diag_vec = (box.box_pos[1]-box.box_pos[0])/2.0;
+	Point3D pa =  box.box_pos[0];
+	Point3D pb = (box.box_pos[1]+box.box_pos[0])/2.0;
+	Point3D diag_vec = (box.box_pos[1]-box.box_pos[0])/2.0;
 
-	Point ra;
-	Point rb;
+	Point3D ra;
+	Point3D rb;
 	for(int i=0;i<3;i++){
 		ra[i] = pa[i]*b[i] + pb[i]*(1.0-b[i]);
 	}
@@ -381,7 +381,7 @@ inline Box3D cal_sub_box(const Box3D &box, int nk){
 	return box_res;
 }
 
-inline bool point_in_box(cosnt Point &pcur, const Box3D &box){
+inline bool point_in_box(cosnt Point3D &pcur, const Box3D &box){
 	for(int i=0;i<3;i++){
 		if( pcur[i] < box.box_pos[0][i] or pcur[i] > box.box_pos[1][i] ){
 			return false;
@@ -391,7 +391,7 @@ inline bool point_in_box(cosnt Point &pcur, const Box3D &box){
 }
 
 
-inline double compute_min_dist(Box3D box, Point x){
+inline double compute_min_dist(Box3D box, Point3D x){
 	double r2 = 0.0;
 	double b[6];
 

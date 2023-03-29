@@ -308,8 +308,8 @@ int main(int argc, char* argv[])
 
 	/*
 	// Used for BoxMesh:
-	Point a0(x0, 	y0, 	z0);
-	Point a1(x0+lx, y0+ly, 	z0+lz);
+	Point3Da0(x0, 	y0, 	z0);
+	Point3D a1(x0+lx, y0+ly, 	z0+lz);
 
 	auto min = BoxMesh::create(MPI_COMM_WORLD,{a0, a1}, {nx,ny,nz},CellType::Type::tetrahedron);
 	auto mesh= std::make_shared<Mesh>(min);
