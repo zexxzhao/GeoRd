@@ -10,16 +10,15 @@ double cos(const T& v1, const T& v2) {
 	return v1.dot(v2) / (v1.norm() * v2.norm() + 1e-30);
 }
 
-std::string d2str(double x){
-	double scale   = 1.0e6;
-	double x_scale = x*scale;
+inline std::string d2str(double x){
+	const double scale   = 1.0e6;
+	double x_scale = (x + 1e2) * scale;
 	std::ostringstream ss;
-	ss << std::scientific << std::setprecision(6) << x_scale;
-	std::string res = ss.str();
-	return res;
+	ss << std::scientific << std::setprecision(8) << x_scale;
+	return ss.str();
 }
 
-void hash_cor(double x, double y, double z, std::string& res_str){
+inline void hash_cor(double x, double y, double z, std::string& res_str){
 	std::string x_str,y_str,z_str;
 
 	res_str.clear();
@@ -30,7 +29,7 @@ void hash_cor(double x, double y, double z, std::string& res_str){
 	res_str = x_str + "," + y_str + "," + z_str;
 };
 
-void hash_con(int x, int y, int z, std::string& res_str){
+inline void hash_con(int x, int y, int z, std::string& res_str){
 	std::string x_str,y_str,z_str;
 
 	int r1,r2,r3;
@@ -46,9 +45,9 @@ void hash_con(int x, int y, int z, std::string& res_str){
 	res_str = x_str + "," + y_str + "," + z_str;
 };
 
-template <typename T> using Triplet = std::tuple<T, T, T>;
+template <typename T> using Triplet = std::array<T, 3>;
 
-template <typename T>
+template <typename T, typename = void>
 struct HashTable {
 	std::size_t operator()(const T& t) const {
 		return std::hash<T>()(t);
@@ -56,12 +55,20 @@ struct HashTable {
 };
 
 template <typename T>
-struct HashTable<Triplet<T>> {
+struct HashTable<Triplet<T>, typename std::enable_if<std::is_floating_point<T>::value>::type> {
 	std::size_t operator()(const Triplet<T>& t) const {
-		std::size_t h1 = std::hash<T>()(std::get<0>(t));
-		std::size_t h2 = std::hash<T>()(std::get<1>(t));
-		std::size_t h3 = std::hash<T>()(std::get<2>(t));
-		return h1 ^ (h2 << 1) ^ (h3 << 2);
+		std::string str;
+		hash_cor(std::get<0>(t), std::get<1>(t), std::get<2>(t), str);
+		return std::hash<std::string>()(str);
+	}
+};
+
+template <typename T>
+struct HashTable<Triplet<T>, typename std::enable_if<std::is_integral<T>::value>::type> {
+	std::size_t operator()(const Triplet<T>& t) const {
+		std::string str;
+		hash_con(std::get<0>(t), std::get<1>(t), std::get<2>(t), str);
+		return std::hash<std::string>()(str);
 	}
 };
 
@@ -93,20 +100,30 @@ struct KeyEqual<Triplet<T>, typename std::enable_if<std::is_integral<T>::value>:
 	}
 };
 
-}
+} // namespace details
+
 
 struct TetrahedralMesh {
-	const int nvertices = 4;
+	// Number of vertices per tetrahedron
+	static constexpr std::size_t cell_vertex_count = 4;
 	std::vector<Point3D> vertices;
-	std::vector<std::array<std::size_t, nvertices>> cells;
+	std::vector<std::array<std::size_t, cell_vertex_count>> cells;
 
-	void get_cell_coordinates(std::size_t cell_id, std::vector<double> &cell_coordinates) const {
-		cell_coordinates.resize(nvertices * 3);
-		for (std::size_t i = 0; i < 4; ++i) {
+	void get_cell_coordinates(std::size_t cell_id,
+							  std::vector<double> &cell_coordinates) const {
+		cell_coordinates.resize(cell_vertex_count * 3);
+		for (std::size_t i = 0; i < cell_vertex_count; ++i) {
 			const auto &x = vertices[cells[cell_id][i]];
 			cell_coordinates[i * 3 + 0] = x[0];
 			cell_coordinates[i * 3 + 1] = x[1];
 			cell_coordinates[i * 3 + 2] = x[2];
+		}
+	}
+
+	void get_cell_coordinates(std::size_t cell_id,
+							  std::array<Point3D, cell_vertex_count>& cell_coordinates) const {
+		for (std::size_t i = 0; i < cell_vertex_count; ++i) {
+			cell_coordinates[i] = vertices[cells[cell_id][i]];
 		}
 	}
 };
@@ -314,13 +331,12 @@ struct Redistance {
 
 	// Adding triangle
 	// 1 triangle or 2 triangles
-	void add_triangle(const TetrahedralMesh &mesh,		\
-				std::shared_ptr<Function>      phid0,		\
-				std::vector<Point>&            phi_vertex,	\
-				std::vector<std::vector<int>>& phi_connect)
-	{
-		std::vector<Point>             phi_tmp_vertex;
-		std::vector<Point>             phi_tet_vertex;
+	void add_triangle(const TetrahedralMesh &mesh,
+				const std::vector<double> &phid0,
+				std::vector<Point> &phi_vertex,
+				std::vector<std::vector<int>>& phi_connect) {
+		// std::vector<Point>             phi_tmp_vertex;
+		// std::vector<Point>             phi_tet_vertex;
 
 		std::vector<double> coordinate_dofs;
 		std::vector<int> phi_pos;
@@ -330,9 +346,9 @@ struct Redistance {
 		Array<double> phival(4);
 		Array<double> phival_vert(1);
 
-		double pos_cor[3];
-		double neg_cor[3];
-		double phi_cor[3];
+		// double pos_cor[3];
+		// double neg_cor[3];
+		// double phi_cor[3];
 
 		std::string hash_tmp;
 
@@ -340,58 +356,37 @@ struct Redistance {
 		std::unordered_map<std::string, int> ver_loc_index_map;
 
 		// for (CellIterator cell(*mesh); !cell.end(); ++cell)
-		for(auto cell: mesh.cells) {
+		for(int icell = 0; icell < mesh.cells.size(); ++icell) {
 			// clear vector
-			std::vector<Point>().swap(phi_tmp_vertex);
-			std::vector<Point>().swap(phi_tet_vertex);
-			std::vector<int>().swap(phi_pos);
-			std::vector<int>().swap(phi_neg);
-
-			// Check that cell is not a ghost
-			// dolfin_assert(!cell->is_ghost());
-
+			// std::vector<Point>().swap(phi_tmp_vertex);
+			// std::vector<Point>().swap(phi_tet_vertex);
+			// std::vector<int>().swap(phi_pos);
+			// std::vector<int>().swap(phi_neg);
+			std::vector<Point3D> phi_tmp_vertex;
+			std::array<Point3D, typename Tetrahedron::cell_vertex_count> phi_tet_vertex;
 			// Get the coordinate of four vertex
-			cell->get_coordinate_dofs(coordinate_dofs);
-			for(int vid = 0;vid < 4;vid++)
-			{
-				// Get coordinate of vertex
-				vcor[0] =  coordinate_dofs[vid*3];
-				vcor[1] =  coordinate_dofs[vid*3+1];
-				vcor[2] =  coordinate_dofs[vid*3+2];
-
-				// Evaluate phi value at one vertex
-				phid0->eval( phival_vert, vcor);
-				phival[vid] = phival_vert[0];
-
-				// split to two group based on sign of phi
-				if(phival_vert[0] > 0.0)
-				{
-					phi_pos.push_back(vid);
+			mesh.get_cell_coordinates(icell, coordinate_dofs);
+			mesh.get_cell_vertices(icell, phi_tet_vertex);
+			// Get the phi value of four vertex
+			for(int ivtx = 0; ivtx < typename TetrahedronMesh::cell_vertex_count; ivtx++) {
+				phival[ivtx] = phid0[mesh.cells[icell][ivtx]];
+				if(phival[ivtx] > 0.0) {
+					phi_pos.push_back(ivtx);
+				} else {
+					phi_neg.push_back(ivtx);
 				}
-				else{
-					phi_neg.push_back(vid);
-				}
-
-				// Tet vertex coordinate
-				phi_tet_vertex.push_back( Point(coordinate_dofs[vid*3],coordinate_dofs[vid*3+1],coordinate_dofs[vid*3+2]) );
 			}
 
 			// save phi = 0 vertex (3 or 4 points)
-			for(int ipos=0;ipos<phi_pos.size();ipos++)
-			{
-				for(int ineg=0;ineg<phi_neg.size();ineg++)
-				{
-					for(int idim=0;idim<3;idim++)
-					{
-						// Get the coordinate from two group member
-						pos_cor[idim] = coordinate_dofs[phi_pos[ipos]*3+idim];
-						neg_cor[idim] = coordinate_dofs[phi_neg[ineg]*3+idim];
+			for(int ipos = 0; ipos < phi_pos.size(); ipos++) {
+				for(int ineg = 0; ineg < phi_neg.size(); ineg++) {
+					// Use linear interpolation to get the phi=0 coordinate
+					auto ratio = (0.0 - phival[phi_neg[ineg]]) /
+								(phival[phi_pos[ipos]] - phival[phi_neg[ineg]] + 1e-30);
+					auto phi_coord = (1.0 - ratio) * phi_tet_vertex[phi_neg[ineg]] +
+								ratio * phi_tet_vertex[phi_pos[ipos]];
 
-						// Linear interpolate to get the phi=0 coordinate
-						double phiratio = (0.0 - phival[phi_neg[ineg]])/(phival[phi_pos[ipos]] - phival[phi_neg[ineg]] + 1e-30);
-						phi_cor[idim]   = neg_cor[idim] + (pos_cor[idim]-neg_cor[idim])*phiratio;
-					}
-
+					// Confusion: Why need to clip the data?
 					//clip the data
 					double clip_tol = 1e-10;
 					for(int ic=0;ic<3;ic++){
@@ -401,18 +396,17 @@ struct Redistance {
 					}
 
 					// save phi=0 coordinate
-					phi_tmp_vertex.push_back(Point(phi_cor[0],phi_cor[1],phi_cor[2]));
+					phi_tmp_vertex.push_back(phi_coord);
 				}
 			}
 
 			// 3 points case (Need to add one triangle)
-			if( phi_pos.size() == 1 or phi_neg.size() == 1 ){
-
+			if(phi_tmp_vertex.size() == 3) {
+				assert(phi_pos.size() == 1 or phi_neg.size() == 1);
 				// Make sure it is empty
 				std::vector<int> tri_con_tmp;
-				std::vector<int>().swap(tri_con_tmp);
 
-				for(int itmp=0;itmp < phi_tmp_vertex.size() ; itmp++){
+				for(int itmp=0;itmp < phi_tmp_vertex.size() ; itmp++) {
 
 					hash_cor(phi_tmp_vertex[itmp].x(),phi_tmp_vertex[itmp].y(),phi_tmp_vertex[itmp].z(),hash_tmp);
 					auto hash_sear = ver_loc_index_map.find(hash_tmp);
@@ -453,8 +447,8 @@ struct Redistance {
 
 			
 			// 4 points case (Need to add two triangle)
-			if( phi_pos.size() == 2 and phi_neg.size() == 2 ){
-
+			else if(phi_tmp_vertex.size() == 4){
+				assert(phi_pos.size() == 2 and phi_neg.size() == 2);
 				int vertex_4_index[4];
 
 				for(int itmp=0;itmp < phi_tmp_vertex.size() ; itmp++){
@@ -478,7 +472,6 @@ struct Redistance {
 					if(itmp != tmp_mark){
 						// Make sure they are empty
 						std::vector<int> tri_con_tmp;
-						std::vector<int>().swap(tri_con_tmp);
 
 						// vertex 0
 						tri_con_tmp.push_back( vertex_4_index[0] );
@@ -519,18 +512,18 @@ struct Redistance {
 	}
 
 	// clean triangle
-	void clean_triangle(	std::vector<int>&	c1_tmp,		\
-				std::vector<int>&     	c2_tmp,		\
-				std::vector<int>&     	c3_tmp,		\
-				std::vector<int>&	c1_res,		\
-				std::vector<int>&	c2_res,		\
-				std::vector<int>&	c3_res,		\
-				std::vector<double>&	vx_un_res,	\
-				std::vector<double>&	vy_un_res,	\
-				std::vector<double>&	vz_un_res,	\
-				std::vector<double>& 	vx_res,		\
-				std::vector<double>&	vy_res,		\
-				std::vector<double>&	vz_res)
+	void clean_triangle(const std::vector<int> &c1_tmp,
+						const std::vector<int> &c2_tmp,
+						const std::vector<int> &c3_tmp,
+						std::vector<int> &c1_res,
+						std::vector<int> &c2_res,
+						std::vector<int> &c3_res,
+						const std::vector<double>&vx_un_res,
+						const std::vector<double>&vy_un_res,
+						const std::vector<double>&vz_un_res,
+						std::vector<double>&vx_res,
+						std::vector<double>&vy_res,
+						std::vector<double>&vz_res)
 	{
 		std::vector<int>     c1_un_res;
 		std::vector<int>     c2_un_res;
