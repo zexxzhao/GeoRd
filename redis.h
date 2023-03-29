@@ -3,7 +3,10 @@
 #include <Octree.h>
 namespace GeoRd {
 
-inline double cal_cosval(Point v1, Point v2){
+namespace details {
+
+template <typename T>
+double cos(const T& v1, const T& v2) {
 	return v1.dot(v2) / (v1.norm() * v2.norm() + 1e-30);
 }
 
@@ -43,7 +46,72 @@ void hash_con(int x, int y, int z, std::string& res_str){
 	res_str = x_str + "," + y_str + "," + z_str;
 };
 
-struct redistance{
+template <typename T> using Triplet = std::tuple<T, T, T>;
+
+template <typename T>
+struct HashTable {
+	std::size_t operator()(const T& t) const {
+		return std::hash<T>()(t);
+	}
+};
+
+template <typename T>
+struct HashTable<Triplet<T>> {
+	std::size_t operator()(const Triplet<T>& t) const {
+		std::size_t h1 = std::hash<T>()(std::get<0>(t));
+		std::size_t h2 = std::hash<T>()(std::get<1>(t));
+		std::size_t h3 = std::hash<T>()(std::get<2>(t));
+		return h1 ^ (h2 << 1) ^ (h3 << 2);
+	}
+};
+
+// Primary template for KeyEqual<T> using SFINAE
+template <typename T, typename = void>
+struct KeyEqual {
+	bool operator()(const T& t1, const T& t2) const {
+		return t1 == t2;
+	}
+};
+
+// Partial specialization for KeyEqual<Triplet<T>> when T is floating point type using SFINAE
+template <typename T>
+struct KeyEqual<Triplet<T>, typename std::enable_if<std::is_floating_point<T>::value>::type> {
+	bool operator()(const Triplet<T>& t1, const Triplet<T>& t2) const {
+		return std::abs(std::get<0>(t1) - std::get<0>(t2)) < 1e-6 &&
+			   std::abs(std::get<1>(t1) - std::get<1>(t2)) < 1e-6 &&
+			   std::abs(std::get<2>(t1) - std::get<2>(t2)) < 1e-6;
+	}
+};
+
+// Partial specialization for KeyEqual<Triplet<T>> when T is integer type using SFINAE
+template <typename T>
+struct KeyEqual<Triplet<T>, typename std::enable_if<std::is_integral<T>::value>::type> {
+	bool operator()(const Triplet<T>& t1, const Triplet<T>& t2) const {
+		return std::get<0>(t1) == std::get<0>(t2) &&
+			   std::get<1>(t1) == std::get<1>(t2) &&
+			   std::get<2>(t1) == std::get<2>(t2);
+	}
+};
+
+}
+
+struct TetrahedralMesh {
+	const int nvertices = 4;
+	std::vector<Point3D> vertices;
+	std::vector<std::array<std::size_t, nvertices>> cells;
+
+	void get_cell_coordinates(std::size_t cell_id, std::vector<double> &cell_coordinates) const {
+		cell_coordinates.resize(nvertices * 3);
+		for (std::size_t i = 0; i < 4; ++i) {
+			const auto &x = vertices[cells[cell_id][i]];
+			cell_coordinates[i * 3 + 0] = x[0];
+			cell_coordinates[i * 3 + 1] = x[1];
+			cell_coordinates[i * 3 + 2] = x[2];
+		}
+	}
+};
+
+struct Redistance {
 	std::vector<std::set<int>> elem_connect;
 	std::vector<la_index>      tec_comm_local_ind_full;
 	std::vector<la_index>      tec_comm_local_ind_reduce;
@@ -52,7 +120,10 @@ struct redistance{
 	int vol_color_flag = 1;
 	int step_num;
 
-	// DFS with non-recursive algorithm
+	//* Coloring triangulation mesh using non-recursive DFS
+	//* [in]  con: connectivity list
+	//* [out] color: color list
+	//
 	void color_help(std::vector<std::set<int>> & con, \
 			std::vector<int>           & color,\
 			int   pos,\
@@ -94,7 +165,7 @@ struct redistance{
 		
 		for(int i=0;i<num;i++){
 			if( color[i] == 0 ){
-				color_help(con,color,i,color_num,color_val);		
+				color_help(con,color,i,color_num,color_val);
 				if(color_num != 0 ){
 					color_val++;
 					color_nlist.push_back(color_num);
@@ -217,27 +288,25 @@ struct redistance{
 	// |/\|
 	// ----
 	// Need to choose \ or / direction
-	int compute_diagonal_direction(std::vector<Point> &phi_tmp_vertex)
-	{
+	int compute_diagonal_direction(std::vector<Point> &phi_tmp_vertex) {
 		int diag_dir = 1;
-		{
-			Point v1 = phi_tmp_vertex[1] - phi_tmp_vertex[0];
-			Point v2 = phi_tmp_vertex[2] - phi_tmp_vertex[0];
-			Point v3 = phi_tmp_vertex[3] - phi_tmp_vertex[0];
 
-			double cos12 = cal_cosval(v1,v2);
-			double cos13 = cal_cosval(v1,v3);
-			double cos23 = cal_cosval(v2,v3);
+		Point v1 = phi_tmp_vertex[1] - phi_tmp_vertex[0];
+		Point v2 = phi_tmp_vertex[2] - phi_tmp_vertex[0];
+		Point v3 = phi_tmp_vertex[3] - phi_tmp_vertex[0];
 
-			if(cos12 <= cos13 and cos12 <= cos23){
-				diag_dir = 3;
-			}
-			if(cos13 <= cos12 and cos13 <= cos23){
-				diag_dir = 2;
-			}
-			if(cos23 <= cos12 and cos23 <= cos13){
-				diag_dir = 1;
-			}
+		double cos12 = details::cos(v1, v2);
+		double cos13 = details::cos(v1, v3);
+		double cos23 = details::cos(v2, v3);
+
+		if(cos12 <= cos13 and cos12 <= cos23){
+			diag_dir = 3;
+		}
+		if(cos13 <= cos12 and cos13 <= cos23){
+			diag_dir = 2;
+		}
+		if(cos23 <= cos12 and cos23 <= cos13){
+			diag_dir = 1;
 		}
 
 		return diag_dir;
@@ -245,7 +314,7 @@ struct redistance{
 
 	// Adding triangle
 	// 1 triangle or 2 triangles
-	void add_triangle(	std::shared_ptr<Mesh>&         mesh,		\
+	void add_triangle(const TetrahedralMesh &mesh,		\
 				std::shared_ptr<Function>      phid0,		\
 				std::vector<Point>&            phi_vertex,	\
 				std::vector<std::vector<int>>& phi_connect)
@@ -270,8 +339,8 @@ struct redistance{
 		int ver_loc_index_cur = 0;
 		std::unordered_map<std::string, int> ver_loc_index_map;
 
-		for (CellIterator cell(*mesh); !cell.end(); ++cell)
-		{
+		// for (CellIterator cell(*mesh); !cell.end(); ++cell)
+		for(auto cell: mesh.cells) {
 			// clear vector
 			std::vector<Point>().swap(phi_tmp_vertex);
 			std::vector<Point>().swap(phi_tet_vertex);
@@ -279,7 +348,7 @@ struct redistance{
 			std::vector<int>().swap(phi_neg);
 
 			// Check that cell is not a ghost
-			dolfin_assert(!cell->is_ghost());
+			// dolfin_assert(!cell->is_ghost());
 
 			// Get the coordinate of four vertex
 			cell->get_coordinate_dofs(coordinate_dofs);
@@ -1344,7 +1413,6 @@ struct redistance{
 
 		bool ismaster = ( dolfin::MPI::rank(MPI_COMM_WORLD) == 0 );
 
-		set_log_active(false);
 
 		// Triangulation of the phi=0
 		add_triangle(mesh, phid0, phi_vertex, phi_connect);
