@@ -70,24 +70,20 @@ inline std::array<T, N> &operator/=(std::array<T, N> &a, double b) {
 
 namespace GeoRd {
 
-template <int D = 3, std::enable_if_t<1 <= D and D <= 3, int> = 0>
-class Point {
+template <int D = 3, std::enable_if_t<1 <= D and D <= 3, int> = 0> class Point {
 public:
     using AtomizedType = double;
 
 public:
     Point() : _x{} {}
 
-    Point(const AtomizedType *x) {
-        std::copy(x, x + D, _x.data());
-    }
+    Point(const AtomizedType *x) { std::copy(x, x + D, _x.data()); }
 
     template <typename... Args, std::enable_if_t<sizeof...(Args) == D, int> = 0,
               std::enable_if_t<std::is_convertible_v<
                                    std::common_type_t<Args...>, AtomizedType>,
                                int> = 0>
     Point(Args... args) : _x{args...} {}
-
 
     const AtomizedType *coordinates() const { return _x.data(); }
     AtomizedType *coordinates() { return _x.data(); }
@@ -112,12 +108,8 @@ public:
         }
     }
 
-    AtomizedType operator[](size_t i) const {
-        return this->_x[i];
-    }
-    AtomizedType &operator[](size_t i) {
-        return this->_x[i];
-    }
+    AtomizedType operator[](size_t i) const { return this->_x[i]; }
+    AtomizedType &operator[](size_t i) { return this->_x[i]; }
 
     Point operator+(const Point &other) const {
         auto p = *this;
@@ -162,7 +154,8 @@ public:
     }
 
     AtomizedType dot(const Point &v) const {
-        return std::inner_product(_x.begin(), _x.end(), v._x.begin(), static_cast<AtomizedType>(0.0));
+        return std::inner_product(_x.begin(), _x.end(), v._x.begin(),
+                                  static_cast<AtomizedType>(0.0));
     }
     Point cross(const Point &v) const {
         if constexpr (D == 3) {
@@ -179,9 +172,7 @@ public:
     }
     AtomizedType norm() const { return std::sqrt(this->dot(*this)); }
 
-    AtomizedType distance(const Point &v) const {
-        return (*this - v).norm();
-    }
+    AtomizedType distance(const Point &v) const { return (*this - v).norm(); }
 
 private:
     std::array<AtomizedType, D> _x;
@@ -193,8 +184,10 @@ template <int D = 3> inline Point<D> operator*(double a, const Point<D> &p) {
     return p * a;
 }
 
-inline typename Point<3>::AtomizedType volume(const Point<3> &p0, const Point<3> &p1,
-                                       const Point<3> &p2, const Point<3> &p3) {
+inline typename Point<3>::AtomizedType volume(const Point<3> &p0,
+                                              const Point<3> &p1,
+                                              const Point<3> &p2,
+                                              const Point<3> &p3) {
 
     const auto ra = p1 - p0;
     const auto rb = p2 - p0;
@@ -203,13 +196,13 @@ inline typename Point<3>::AtomizedType volume(const Point<3> &p0, const Point<3>
     return std::abs(vol);
 }
 
-inline typename Point<3>::AtomizedType area(const Point<3> &p0, const Point<3> &p1,
-                                     const Point<3> &p2) {
+inline typename Point<3>::AtomizedType
+area(const Point<3> &p0, const Point<3> &p1, const Point<3> &p2) {
     const auto ra = p1 - p0;
     const auto rb = p2 - p0;
     double area = 0.5 * ra.cross(rb).norm();
     return std::abs(area);
 }
 
-}
+} // namespace GeoRd
 #endif

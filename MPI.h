@@ -121,6 +121,33 @@ void MPI_broadcast(MPI_Comm comm, std::vector<T> &value, int send_proc = 0) {
     MPI_Bcast(value.data(), value.size(), MPI_type<T>(), send_proc, comm);
 }
 
+template <typename T>
+void MPI_scatter(MPI_COMM comm, const std::vector<std::vector<T>> send_data,
+                 std::vector<T> recv_data, int send_proc = 0) {
+    const auto size = MPI_size(comm);
+    std::vector<int> pcounts(size);
+    for (size_t i = 0; i < size; ++i) {
+        pcounts[i] = send_data[i].size();
+    }
+    MPI_broadcast(comm, pcounts, send_proc);
+
+    std::vector<int> offsets(size + 1, 0);
+    for (size_t i = 1; i <= size; ++i) {
+        offsets[i] = offsets[i - 1] + pcounts[i - 1];
+    }
+    const size_t n = std::accumulate(pcounts.begin(), pcounts.end(), 0);
+    std::vector<T> cache;
+    cache.resize(n);
+    for (size_t i = 0; i < size; ++i) {
+        std::copy(send_data[i].begin(), send_data[i].end(),
+                  cache.begin() + offsets[i]);
+    }
+    recv_data.resize(pcounts[MPI_rank(comm)]);
+    MPI_Scatterv(cache.data(), pcounts.data(), offsets.data(), MPI_type<T>(),
+                 recv_data.data(), recv_data.size(), MPI_type<T>(), send_proc,
+                 comm);
+}
+
 template <typename T, typename X>
 T all_reduce(MPI_Comm comm, const T &value, X op) {
     T out;
@@ -239,6 +266,67 @@ void MPI_alltoall(MPI_Comm comm, const std::vector<std::vector<T>> &in,
                   data_size_recv.data(), data_offset_recv.data(), MPI_type<T>(),
                   comm);
 }
+
+template <typename T> struct MPI_DataDistributor {
+    std::vector<T> data;
+    std::vector<std::vector<int>> proc_id;
+    int root;
+
+    template <typename Index,
+              std::enable_if<std::is_integral<Index>::value, int> = 0>
+    MPI_DataDistributor(const std::vector<T> &shared_data,
+                        const std::vector<Index> &gid, int root_rank = 0)
+        : root(root_rank) {
+        std::vector<Index> gid_tmp;
+        MPI_gather(MPI_COMM_WORLD, gid, gid_tmp);
+        std::vector<T> data_tmp;
+        MPI_gather(MPI_COMM_WORLD, send_data, data_tmp);
+        // gather the processor id
+        std::vector<int> proc_id(gid.size(), MPI_rank(MPI_COMM_WORLD));
+        std::vector<int> proc_id_tmp;
+        MPI_gather(MPI_COMM_WORLD, proc_id, proc_id_tmp);
+
+        // save the data and processor id
+        if (MPI_rank(MPI_COMM_WORLD) != 0) {
+            return;
+        }
+        auto n = std::max_element(gid_tmp.begin(), gid_tmp.end()) + 1;
+        data.assign(n, std::numeric_limits<T>::nan());
+        for (auto i = 0; i < gid_tmp.size(); i++) {
+            proc_id[gid_tmp[i]].push_back(proc_id_tmp[i]);
+
+            auto &d = data[gid_tmp[i]];
+            if (std::isnan(d)) {
+                d = data_tmp[i];
+            }
+            else if (d != data_tmp[i]) {
+                throw std::runtime_error("Inconsistent data");
+            }
+        }
+    }
+
+    std::vector<T> &get_data() {
+        if (MPI_rank(MPI_COMM_WORLD) == 0) {
+            return data;
+        }
+        else {
+            throw std::runtime_error("Only rank 0 can access the data");
+        }
+    }
+
+    void distribute_data(std::vector<T> &recv_data) const {
+        // reshape the data to be sent
+        std::vector<std::vector<T>> send_data(MPI_size());
+        for (auto i = 0; i < proc_id.size(); i++) {
+            for (auto j = 0; j < proc_id[i].size(); j++) {
+                send_data[proc_id[i][j]].push_back(data[i]);
+            }
+        }
+        // send the send_data from processor 0 to the corresponding processors
+        MPI_scatter(MPI_COMM_WORLD, send_data, recv_data);
+    }
+};
+
 } // namespace details
 } // namespace GeoRd
 #endif // __MPI_H__
