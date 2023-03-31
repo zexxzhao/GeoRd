@@ -60,24 +60,16 @@ struct Mesh<Elem, Layout::Distributed> : public struct Mesh<Elem> {
     std::vector<std::size_t> element_local2global;
 };
 
-template <typename Elem>
-void get_vertex_connectivity_in_local_patch(
-    const Mesh<Elem, Layout::Distributed> &mesh, Graph &graph) {
+template <typename Elem, typename Layout>
+void get_vertex_connectivity(const Mesh<Element, Layout> &mesh, Graph &graph) {
     graph.clear();
     for (std::size_t i = 0; i < mesh.elements.size(); ++i) {
-        std::array<std::size_t, Elem::n_vertices> global_vertex_ids;
-        // get global vertex ids
         for (std::size_t j = 0; j < Elem::n_vertices; ++j) {
-            global_vertex_ids[j] =
-                mesh.vertex_local2global[mesh.elements[i * Elem::n_vertices +
-                                                       j]];
-        }
-        // add to graph
-        for (std::size_t j = 0; j < Elem::n_vertices; ++j) {
-            auto &neighbors = graph[global_vertex_ids[j]];
+            auto &neighbors = graph[mesh.elements[i * Elem::n_vertices + j]];
             for (std::size_t k = 0; k < Elem::n_vertices; ++k) {
                 if (j != k) {
-                    neighbors.push_back(global_vertex_ids[k]);
+                    neighbors.push_back(
+                        mesh.elements[i * Elem::n_vertices + k]);
                 }
             }
         }
@@ -87,6 +79,21 @@ void get_vertex_connectivity_in_local_patch(
         std::sort(kv.second.begin(), kv.second.end());
         kv.second.erase(std::unique(kv.second.begin(), kv.second.end()),
                         kv.second.end());
+    }
+}
+
+template <typename Elem>
+void get_vertex_connectivity_in_local_patch(
+    const Mesh<Elem, Layout::Distributed> &mesh, Graph &graph) {
+    graph.clear();
+    Graph local_graph;
+    get_vertex_connectivity(mesh, local_graph);
+    for (auto &kv : local_graph) {
+        auto &neighbors = graph[mesh.vertex_local2global[kv.first]];
+        neighbors.assign(kv.second.begin(), kv.second.end());
+        std::for_each(
+            neighbors.begin(), neighbors.end(),
+            [&mesh](std::size_t &v) { v = mesh.vertex_local2global[v]; });
     }
 }
 

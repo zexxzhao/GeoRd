@@ -1,20 +1,21 @@
 #ifndef __REDIS_H__
 #define __REDIS_H__
+#include "Mesh.h"
 #include "Octree.h"
 #include <set>
 #include <unorder_map>
 namespace GeoRd {
-
-#include "Mesh.h"
 
 using TetrahedronMesh = Mesh<Element::Tetrahedron, 3, Layout::Distributed>;
 
 using TriangleMesh = Mesh<Element::Triangle, 3, Layout::Exclusive>;
 
 namespace details {
-void write_interface_txt(std::vector<double> &vx, std::vector<double> &vy,
-                         std::vector<double> &vz, std::vector<int> &color) {
-    std::string interface_name = "phi0/tri" + std::to_string(step_num) + ".dat";
+template <typename T, typename U>
+void write_interface_txt(const std::vector<T> &vx, const std::vector<T> &vy,
+                         const std::vector<T> &vz,
+                         const std::vector<U> &color) {
+    std::string interface_name = "phi0/tri.dat";
     std::ofstream stFile(interface_name);
 
     for (int i = 0; i < vx.size(); i++) {
@@ -25,17 +26,17 @@ void write_interface_txt(std::vector<double> &vx, std::vector<double> &vy,
 }
 
 // Write out phi=0 surface triangulation
-void write_triangulation(std::vector<double> &vx_res,
-                         std::vector<double> &vy_res,
-                         std::vector<double> &vz_res,
-                         std::vector<double> &nx_res,
-                         std::vector<double> &ny_res,
-                         std::vector<double> &nz_res, std::vector<int> &c1_res,
-                         std::vector<int> &c2_res, std::vector<int> &c3_res) {
+template <typename T, typename U>
+void write_triangulation(
+    const std::vector<T> &vx_res, const std::vector<T> &vy_res,
+    const std::vector<T> &vz_res, const std::vector<T> &nx_res,
+    const std::vector<T> &ny_res, const std::vector<T> &nz_res,
+    const std::vector<U> &c1_res, const std::vector<U> &c2_res,
+    const std::vector<U> &c3_res) {
     int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
 
     if (rankvalues == 0) {
-        std::string name = "sur/vertex" + std::to_string(step_num) + ".dat";
+        std::string name = "sur/vertex.dat";
         std::ofstream pFile(name);
         for (int itmp = 0; itmp < vx_res.size(); itmp++) {
             pFile << std::fixed << std::setprecision(10) << vx_res[itmp] << " "
@@ -45,7 +46,7 @@ void write_triangulation(std::vector<double> &vx_res,
     }
 
     if (rankvalues == 0) {
-        std::string name = "sur/normal" + std::to_string(step_num) + ".dat";
+        std::string name = "sur/normal.dat";
         std::ofstream pFile(name);
         for (int itmp = 0; itmp < nx_res.size(); itmp++) {
             pFile << std::fixed << std::setprecision(10) << nx_res[itmp] << " "
@@ -55,7 +56,7 @@ void write_triangulation(std::vector<double> &vx_res,
     }
 
     if (rankvalues == 0) {
-        std::string name = "sur/connect" + std::to_string(step_num) + ".dat";
+        std::string name = "sur/connect.dat";
         std::ofstream pFile(name);
         for (int itmp = 0; itmp < c1_res.size(); itmp++) {
             pFile << c1_res[itmp] << " " << c2_res[itmp] << " " << c3_res[itmp]
@@ -63,79 +64,80 @@ void write_triangulation(std::vector<double> &vx_res,
         }
         pFile.close();
     }
+}
 
-    /**
-     * @brief Make sure the normal vector of the triangle is pointing where phi
-     * is positive
-     *
-     * @param[in] phi_vertex vertex coordinate of the triangulation mesh
-     * @param[in] phi_tet_vertex vertex coordinate of the tetrahedral
-     * @param[out] tri_con_tmp connectivity list of the triangle
-     * @param[in] phival scalar function value of the tetrahedral mesh
-     */
-    void compute_triangle_winding_in_tetrahedron(
-        const std::vector<Point3D> &phi_vertex,
-        const std::vector<Point3D> &phi_tet_vertex,
-        std::vector<int> &tri_con_tmp,
-        const std::array<double, typename VolumeMesh::Element::n_vertices>
-            &phival) {
+/**
+ * @brief Make sure the normal vector of the triangle is pointing where phi
+ * is positive
+ *
+ * @param[in] phi_vertex vertex coordinate of the triangulation mesh
+ * @param[in] phi_tet_vertex vertex coordinate of the tetrahedral
+ * @param[out] tri_con_tmp connectivity list of the triangle
+ * @param[in] phival scalar function value of the tetrahedral mesh
+ */
+void compute_triangle_winding_in_tetrahedron(
+    const std::vector<Point3D> &phi_vertex,
+    const std::vector<Point3D> &phi_tet_vertex, std::vector<int> &tri_con_tmp,
+    const std::array<double, typename VolumeMesh::Element::n_vertices>
+        &phival) {
 
-        // Get triangle vertex coordinate
-        auto v1_tmp = phi_vertex[tri_con_tmp[0]];
-        v2_tmp = phi_vertex[tri_con_tmp[1]];
-        v3_tmp = phi_vertex[tri_con_tmp[2]];
+    // Get triangle vertex coordinate
+    auto v1_tmp = phi_vertex[tri_con_tmp[0]];
+    v2_tmp = phi_vertex[tri_con_tmp[1]];
+    v3_tmp = phi_vertex[tri_con_tmp[2]];
 
-        // Calculate the normal vector for triangle
-        const double unit_scale = 1e6;
-        auto e12 = (v2_tmp - v1_tmp) * unit_scale;
-        auto e13 = (v3_tmp - v1_tmp) * unit_scale;
-        auto nor = e12.cross(e13);
-        nor /= nor.norm() + 1e-30;
+    // Calculate the normal vector for triangle
+    const double unit_scale = 1e6;
+    auto e12 = (v2_tmp - v1_tmp) * unit_scale;
+    auto e13 = (v3_tmp - v1_tmp) * unit_scale;
+    auto nor = e12.cross(e13);
+    nor /= nor.norm() + 1e-30;
 
-        // Check the direction of normal
-        // get the index of the vertex with largest absolute phi value
-        auto it = std::max_element(
-            phival.begin(), phival.end(),
-            [](double a, double b) { return std::abs(a) < std::abs(b); });
-        auto sign = (*it > 0 ? 1 : -1);
-        auto index = std::distance(phival.begin(), it);
+    // Check the direction of normal
+    // get the index of the vertex with largest absolute phi value
+    auto it =
+        std::max_element(phival.begin(), phival.end(), [](double a, double b) {
+            return std::abs(a) < std::abs(b);
+        });
+    auto sign = (*it > 0 ? 1 : -1);
+    auto index = std::distance(phival.begin(), it);
 
-        auto dot_val = (phi_tet_vertex[index] - v1_tmp).dot(nor) * sign;
+    auto dot_val = (phi_tet_vertex[index] - v1_tmp).dot(nor) * sign;
 
-        if (dot_val < 0.0) {
-            std::swap(tri_con_tmp[1], tri_con_tmp[2]);
-        }
+    if (dot_val < 0.0) {
+        std::swap(tri_con_tmp[1], tri_con_tmp[2]);
+    }
+}
+
+// For 4 Node case
+// ----
+// |\/|
+// |/\|
+// ----
+// Need to choose \ or / direction
+int compute_diagonal_direction(std::vector<Point> &phi_tmp_vertex) {
+    int diag_dir = 1;
+
+    Point3D v1 = phi_tmp_vertex[1] - phi_tmp_vertex[0];
+    Point3D v2 = phi_tmp_vertex[2] - phi_tmp_vertex[0];
+    Point3D v3 = phi_tmp_vertex[3] - phi_tmp_vertex[0];
+
+    double cos12 = details::cos(v1, v2);
+    double cos13 = details::cos(v1, v3);
+    double cos23 = details::cos(v2, v3);
+
+    if (cos12 <= cos13 and cos12 <= cos23) {
+        diag_dir = 3;
+    }
+    if (cos13 <= cos12 and cos13 <= cos23) {
+        diag_dir = 2;
+    }
+    if (cos23 <= cos12 and cos23 <= cos13) {
+        diag_dir = 1;
     }
 
-    // For 4 Node case
-    // ----
-    // |\/|
-    // |/\|
-    // ----
-    // Need to choose \ or / direction
-    int compute_diagonal_direction(std::vector<Point> & phi_tmp_vertex) {
-        int diag_dir = 1;
-
-        Point3D v1 = phi_tmp_vertex[1] - phi_tmp_vertex[0];
-        Point3D v2 = phi_tmp_vertex[2] - phi_tmp_vertex[0];
-        Point3D v3 = phi_tmp_vertex[3] - phi_tmp_vertex[0];
-
-        double cos12 = details::cos(v1, v2);
-        double cos13 = details::cos(v1, v3);
-        double cos23 = details::cos(v2, v3);
-
-        if (cos12 <= cos13 and cos12 <= cos23) {
-            diag_dir = 3;
-        }
-        if (cos13 <= cos12 and cos13 <= cos23) {
-            diag_dir = 2;
-        }
-        if (cos23 <= cos12 and cos23 <= cos13) {
-            diag_dir = 1;
-        }
-
-        return diag_dir;
-    }
+    return diag_dir;
+}
 }
 
 // Adding triangle
@@ -159,14 +161,14 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
     // double neg_cor[3];
     // double phi_cor[3];
 
-    std::string hash_tmp;
+    // std::string hash_tmp;
 
     int ver_loc_index_cur = 0;
     // std::unordered_map<std::string, int> vertex_to_local_index;
     details::Point3DMap<std::size_t> vertex_to_local_index;
 
     // for (CellIterator cell(*mesh); !cell.end(); ++cell)
-    for (int icell = 0; icell < mesh.cells.size(); ++icell) {
+    for (int icell = 0; icell < mesh.elements.size() / 4; ++icell) {
         // clear vector
         // std::vector<Point>().swap(phi_tmp_vertex);
         // std::vector<Point>().swap(phi_tet_vertex);
@@ -350,52 +352,29 @@ void clean_triangle(const std::vector<int> &c1_tmp,
     int con_glo_index_cur = 0;
     std::string hash_tmp;
     // std::unordered_map<std::string, int> con_glo_index_map;
-    details::Point3DMap con_glo_index_map_point;
+    details::UnorderedMap<details::Triplet<int>, std::size_t> con_glo_index_map;
 
     int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
 
     // Triangle cleaning
     if (rankvalues == 0) {
+        // Map triangle to global index
         for (int itmp = 0; itmp < c1_tmp.size(); itmp++) {
-            int c1_index = c1_tmp[itmp];
-            int c2_index = c2_tmp[itmp];
-            int c3_index = c3_tmp[itmp];
 
-            if (c1_index == c2_index || c1_index == c3_index ||
-                c2_index == c3_index) {
+            if (c1_tmp[itmp] == c2_tmp[itmp] or c1_tmp[itmp] == c3_tmp[itmp] or
+                c2_tmp[itmp] == c3_tmp[itmp]) {
                 continue;
             }
-            else {
-                hash_con(c1_index, c2_index, c3_index, hash_tmp);
-                auto hash_sear = con_glo_index_map.find(hash_tmp);
-                if (hash_sear == con_glo_index_map.end()) {
-                    c1_un_res.push_back(c1_index);
-                    c2_un_res.push_back(c2_index);
-                    c3_un_res.push_back(c3_index);
-                    con_glo_index_map[hash_tmp] = con_glo_index_cur;
-                    con_glo_index_cur++;
-                }
+            details::Triplet<int> tri_tmp{c1_tmp[itmp], c2_tmp[itmp],
+                                          c3_tmp[itmp]};
+            auto it = con_glo_index_map.find(tri_tmp);
+            if (it == con_glo_index_map.end()) {
+                c1_un_res.push_back(c1_tmp[itmp]);
+                c2_un_res.push_back(c2_tmp[itmp]);
+                c3_un_res.push_back(c3_tmp[itmp]);
+                con_glo_index_map.insert({tri_tmp, con_glo_index_cur});
+                con_glo_index_cur++;
             }
-        }
-
-        std::vector<std::set<int>> node_connect(vx_un_res.size(),
-                                                std::set<int>());
-        for (int iele = 0; iele < c1_un_res.size(); iele++) {
-            int c1_index = c1_un_res[iele];
-            int c2_index = c2_un_res[iele];
-            int c3_index = c3_un_res[iele];
-
-            // edge c1-c2
-            node_connect[c1_index].insert(c2_index);
-            node_connect[c2_index].insert(c1_index);
-
-            // edge c2-c3
-            node_connect[c2_index].insert(c3_index);
-            node_connect[c3_index].insert(c2_index);
-
-            // edge c3-c1
-            node_connect[c3_index].insert(c1_index);
-            node_connect[c1_index].insert(c3_index);
         }
 
         // cal_color(node_connect, color, color_num);
@@ -403,7 +382,7 @@ void clean_triangle(const std::vector<int> &c1_tmp,
             std::cout << "    Surface color " << i
                       << " number: " << color_num[i] << std::endl;
         }
-        write_interface_txt(vx_un_res, vy_un_res, vz_un_res, color);
+        // write_interface_txt(vx_un_res, vy_un_res, vz_un_res, color);
 
         int num_tol = 50;
         int clean_index = 0;
@@ -450,6 +429,101 @@ void clean_triangle(const std::vector<int> &c1_tmp,
     details::MPI_broadcast(MPI_COMM_WORLD, c1_res);
     details::MPI_broadcast(MPI_COMM_WORLD, c2_res);
     details::MPI_broadcast(MPI_COMM_WORLD, c3_res);
+}
+
+template <typename T>
+void get_duplicated_triangles(const TriangleMesh &mesh,
+                              std::vector<T> &duplicated_triangle_index) {
+    using Triangle = details::Triplet<std::size_t>;
+    std::unordered_set<Triangle, details::HashTable<Triangle>,
+                       details::KeyEqual<Triangle>>
+        triangles;
+
+    for (std::size_t i = 0; i < mesh.elements.size();
+         i += typename TriangleMesh::Element::n_vertices) {
+        Triangle tri_tmp{mesh.elements[i], mesh.elements[i + 1],
+                         mesh.elements[i + 2]};
+        if (triangles.find(tri_tmp) == triangles.end()) {
+            triangles.insert(tri_tmp);
+        }
+        else {
+            duplicated_triangle_index.push_back(i);
+        }
+    }
+}
+
+template <typename T>
+void get_small_droplets(const TriangleMesh &mesh,
+                        std::vector<T> &small_droplets_index, int criteria) {
+    // generate vertex connectivity
+    Graph graph;
+    get_vertex_connectivity(mesh, graph);
+
+    // traverse the graph and color the vertices
+    std::vector<std::vector<size_t>> color;
+    connected_components(graph, color);
+
+    // remove small droplets
+    std::for_each(
+        color.begin(), color.end(), [&](std::vector<size_t> &color_i) {
+            if (color_i.size() < criteria) {
+                small_droplets_index.insert(small_droplets_index.end(),
+                                            color_i.begin(), color_i.end());
+            }
+        });
+}
+
+// remove duplicated triangles and small droplets
+inline void clean_triangle(TriangleMesh &mesh, int criteria) {
+    if (details::MPI_rank()) {
+        return;
+    }
+    std::vector<std::size_t> removable_triangle_index;
+    get_duplicated_triangles(mesh, removable_triangle_index);
+    get_small_droplets(mesh, removable_triangle_index, criteria);
+    std::set<std::size_t> removable_triangle_index_set(
+        removable_triangle_index.begin(), removable_triangle_index.end());
+    // copy the remaining triangles to a new mesh
+    TriangleMesh mesh_clean;
+    const auto nvtx_triangle = typename TriangleMesh::Element::n_vertices;
+    mesh_clean.elements.reserve(
+        mesh.elements.size() - nvtx_triangle * removable_triangle_index.size());
+    for (std::size_t i = 0; i < mesh.elements.size(); i += nvtx_triangle) {
+        if (removable_triangle_index_set.find(i) ==
+            removable_triangle_index_set.end()) {
+            mesh_clean.elements.push_back(mesh.elements[i]);
+            mesh_clean.elements.push_back(mesh.elements[i + 1]);
+            mesh_clean.elements.push_back(mesh.elements[i + 2]);
+        }
+    }
+    // collect the remaining vertices
+    std::set<std::size_t> remaining_vertices;
+    for (std::size_t i = 0; i < mesh_clean.elements.size(); i++) {
+        remaining_vertices.insert(mesh_clean.elements[i]);
+    }
+    // copy the remaining vertices to a new mesh
+    mesh_clean.vertices.reserve(remaining_vertices.size());
+    for (std::size_t i = 0; i < mesh.vertices.size(); i++) {
+        if (remaining_vertices.find(i) != remaining_vertices.end()) {
+            mesh_clean.vertices.push_back(mesh.vertices[i]);
+        }
+    }
+    // update the vertex indices in the elements
+    std::unordered_map<std::size_t, std::size_t> vertex_index_map;
+    std::size_t new_index = 0;
+    for (std::size_t i = 0; i < mesh_clean.elements.size(); i++) {
+        auto it = vertex_index_map.find(mesh_clean.elements[i]);
+        if (it == vertex_index_map.end()) {
+            vertex_index_map[mesh_clean.elements[i]] = new_index;
+            mesh_clean.elements[i] = new_index;
+            new_index++;
+        }
+        else {
+            mesh_clean.elements[i] = it->second;
+        }
+    }
+    // update the mesh
+    mesh = std::move(mesh_clean);
 }
 
 // combine triangles
@@ -1032,6 +1106,7 @@ template <> struct Redistance<TetrahedronMesh> {
         }
         details::MPI_gather(MPI_COMM_WORLD, global_ind_reduce_loc,
                             global_ind_reduce_loc_glo, 0);
+        // set_local(owned_vertices);
     };
 
     // combine distributed scalar data to master processor
@@ -1075,7 +1150,7 @@ template <> struct Redistance<TetrahedronMesh> {
     void tec_phi_comm(std::shared_ptr<Function> &phi0,
                       std::vector<double> &phi0_vec,
                       std::vector<dolfin::la_index> &vertex2dof_map,
-                      std::shared_ptr<Mesh> &mesh){
+                      std::shared_ptr<Mesh> &mesh) {
         /*
         std::vector<la_index> local_ind_full;
             std::vector<la_index> local_ind_reduce;
@@ -1086,8 +1161,10 @@ template <> struct Redistance<TetrahedronMesh> {
         phi0_vec,local_ind_full,local_ind_reduce,global_ind_reduce_loc_glo,vertex2dof_map);
         */
 
-        // tec_scalar_comm(phi0,
-        // phi0_vec,this->tec_comm_local_ind_full,this->tec_comm_local_ind_reduce,this->tec_comm_global_ind_reduce_loc_glo,vertex2dof_map);
+        tec_scalar_comm(phi0, phi0_vec, this->tec_comm_local_ind_full,
+                        this->tec_comm_local_ind_reduce,
+                        this->tec_comm_global_ind_reduce_loc_glo,
+                        vertex2dof_map);
     };
 
     // Compute edge connectivity
@@ -1186,7 +1263,7 @@ template <> struct Redistance<TetrahedronMesh> {
             }
 
             phi_sign.resize(phi0_vec.size());
-
+            // TODO: set a strictor criteria for the number of vertices
             int num_tol = 100;
             for (int i = 0; i < phi_sign.size(); i++) {
                 int color_nk = color_num[color[i] - 1];
@@ -1261,7 +1338,7 @@ template <> struct Redistance<TetrahedronMesh> {
         // compute_normal(vx_res, vy_res, vz_res, c1_res, c2_res, c3_res,
         //                vertex_nor_x, vertex_nor_y, vertex_nor_z,
         //                vertex_nor_num, vertex_nor_area);
-        compute_normal_vector(isosurface, );
+        compute_normal_vector(isosurface, /***/);
         // Laplace smoothing
         // laplace_smooth(vx_res, vy_res, vz_res, c1_res, c2_res, c3_res);
 
