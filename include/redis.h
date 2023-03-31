@@ -138,7 +138,6 @@ int compute_diagonal_direction(std::vector<Point> &phi_tmp_vertex) {
 
     return diag_dir;
 }
-}
 
 // Adding triangle
 // 1 triangle or 2 triangles
@@ -879,9 +878,7 @@ void get_free_surface(const VolumeMesh &mesh, const std::vector<double> &phid0,
 
 void compute_normal_vector(const TriangleMesh &mesh,
                            std::vector<Point3D> &vertices,
-                           std::vector<Point3D> &normals,
-                           std::vector<double> &degrees,
-                           std::vector<double> &areas) {
+                           std::vector<Point3D> &normals) {
     std::vector<double> point_x(mesh.vertices.size());
     std::vector<double> point_y(mesh.vertices.size());
     std::vector<double> point_z(mesh.vertices.size());
@@ -903,12 +900,14 @@ void compute_normal_vector(const TriangleMesh &mesh,
     std::vector<double> vertex_nor_z(mesh.vertices.size());
     std::vector<double> vertex_nor_num(mesh.vertices.size());
     std::vector<double> vertex_nor_area(mesh.vertices.size());
+    std::vector<double> degrees;
+    std::vector<double> areas;
     compute_normal(point_x, point_y, point_z, cell_index0, cell_index1,
                    cell_index2, vertex_nor_x, vertex_nor_y, vertex_nor_z,
                    degrees, areas);
 
     filter_point(point_x, point_y, point_z, vertex_nor_x, vertex_nor_y,
-                 vertex_nor_z, vertex_nor_num, vertex_nor_area);
+                 vertex_nor_z, degrees, areas);
 
     vertices.clear();
     vertices.reserve(point_x.size());
@@ -933,35 +932,24 @@ template <> struct Redistance<TetrahedronMesh> {
     Graph global_vertex_connectivity;
     std::vector<double> scalar_field;
 
-    int vol_color_flag = 1;
-
     Redistance(const VolumeMesh &mesh) : domain(mesh) {
         get_vertex_connectivity_in_global_patch(mesh,
                                                 global_vertex_connectivity);
     }
 
-    void init(const std::vector<double> &phid0) {
-        // get free surface
-        get_free_surface(domain, phid0, free_surface_mesh);
-        // get the global scalar field
-        std::vector<std::size_t> local_vertex_index, global_vertex_index;
-        std::vector<double> local_vertex_scalar, global_vertex_scalar;
-
-        details::MPI_gather(MPI_COMM_WORLD, local_vertex_index,
-                            global_vertex_index);
-        details::MPI_gather(MPI_COMM_WORLD, local_vertex_scalar,
-                            global_vertex_scalar);
-        if (details::MPI_rank() == 0) {
-            auto num_vertex = 1 + *std::max_element(global_vertex_index.begin(),
-                                                    global_vertex_index.end());
-            scalar_field.resize(num_vertex);
-            for (std::size_t i = 0; i < global_vertex_index.size(); ++i) {
-                scalar_field[global_vertex_index[i]] = global_vertex_scalar[i];
-            }
+    //
+    void init(const std::vector<double> &phid0,
+              int small_droplet_tolerance = 100) {
+        // Gather the levelset function
+        details::MPI_DataDistribution dist;
+        std::vector<int> gid;
+        for (int ivtx = 0; ivtx < domain.vertices.size(); ivtx++) {
+            gid.push_back(mesh.vertex_local2global[ivtx]);
         }
-        else {
-            scalar_field.clear();
-        }
+        dist.gather(gid, phid0);
+        scalar_field = dist.get_value();
+        // flip the sign of the levelset function in small droplets
+        overwrite_small_droplets(small_droplet_tolerance);
     }
 
     // Compute levelset sign distance function here
@@ -1079,94 +1067,6 @@ template <> struct Redistance<TetrahedronMesh> {
         }
     }
 
-    // tecplot communication computation
-    void tec_map_compute(std::vector<la_index> &local_ind_full,
-                         std::vector<la_index> &local_ind_reduce,
-                         std::vector<int> &global_ind_reduce_loc_glo,
-                         std::shared_ptr<Mesh> mesh) {
-        std::vector<int> global_ind_reduce_loc;
-
-        int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
-        int ii = 0;
-        for (VertexIterator v(*mesh); !v.end(); ++v) {
-            ii++;
-            local_ind_full.push_back(ii - 1);
-            int global_ind = v->global_index();
-            if (v->is_shared()) {
-                auto sharing_id = v->sharing_processes();
-                sharing_id.insert(rankvalues);
-
-                if (rankvalues != *(sharing_id.begin())) {
-                    continue;
-                }
-            }
-
-            local_ind_reduce.push_back(ii - 1);
-            global_ind_reduce_loc.push_back(global_ind);
-        }
-        details::MPI_gather(MPI_COMM_WORLD, global_ind_reduce_loc,
-                            global_ind_reduce_loc_glo, 0);
-        // set_local(owned_vertices);
-    };
-
-    // combine distributed scalar data to master processor
-    void tec_scalar_comm(std::shared_ptr<Function> &p0,
-                         std::vector<double> &p0_out,
-                         std::vector<la_index> &local_ind_full,
-                         std::vector<la_index> &local_ind_reduce,
-                         std::vector<int> &global_ind_reduce_loc_glo,
-                         std::vector<dolfin::la_index> &vertex2dof_map) {
-        int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
-
-        std::vector<double> p0_vec;
-        std::size_t p0_shape = local_ind_full.size();
-        p0_vec.resize(p0_shape);
-        p0->vector()->get_local(p0_vec.data(), p0_shape, local_ind_full.data());
-
-        std::vector<double> p0_loc;
-        std::vector<double> p0_glo;
-        p0_loc.resize(local_ind_reduce.size());
-
-        for (int i = 0; i < local_ind_reduce.size(); i++) {
-            auto dof_ind = vertex2dof_map[local_ind_reduce[i]];
-            p0_loc[i] = p0_vec[dof_ind];
-        }
-        details::MPI_gather(MPI_COMM_WORLD, p0_loc, p0_glo, 0);
-
-        if (rankvalues == 0) {
-            p0_out.resize(global_ind_reduce_loc_glo.size());
-
-            for (int i = 0; i < global_ind_reduce_loc_glo.size(); i++) {
-                p0_out[global_ind_reduce_loc_glo[i]] = p0_glo[i];
-            }
-
-            // for(int i=0;i<p0_out.size();i++){
-            //         std::cout<<p0_out[i]<<std::endl;
-            // }
-        }
-    };
-
-    // combine data to master processor
-    void tec_phi_comm(std::shared_ptr<Function> &phi0,
-                      std::vector<double> &phi0_vec,
-                      std::vector<dolfin::la_index> &vertex2dof_map,
-                      std::shared_ptr<Mesh> &mesh) {
-        /*
-        std::vector<la_index> local_ind_full;
-            std::vector<la_index> local_ind_reduce;
-            std::vector<int>      global_ind_reduce_loc_glo;
-        int rankvalues = dolfin::MPI::rank(MPI_COMM_WORLD);
-        tec_map_compute(local_ind_full,local_ind_reduce,global_ind_reduce_loc_glo,mesh);
-        tec_scalar_comm(phi0,
-        phi0_vec,local_ind_full,local_ind_reduce,global_ind_reduce_loc_glo,vertex2dof_map);
-        */
-
-        tec_scalar_comm(phi0, phi0_vec, this->tec_comm_local_ind_full,
-                        this->tec_comm_local_ind_reduce,
-                        this->tec_comm_global_ind_reduce_loc_glo,
-                        vertex2dof_map);
-    };
-
     // Compute edge connectivity
     void compute_connect(std::vector<std::set<int>> &node_connect_glo,
                          std::shared_ptr<Mesh> &mesh) {
@@ -1238,45 +1138,29 @@ template <> struct Redistance<TetrahedronMesh> {
     //  compute_connect(this->elem_connect, mesh);
     // }
 
-    void compute_vol_color(std::shared_ptr<Mesh> &mesh,
-                           std::shared_ptr<Function> phid0,
-                           std::vector<int> &phi_sign,
-                           std::vector<std::size_t> &d2v_map,
-                           std::vector<dolfin::la_index> &v2d_map) {
-        std::vector<int> color;
-        std::vector<int> color_num;
-
-        std::vector<double> phi0_vec;
+    void overwrite_small_droplets(int num_tol) {
 
         int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
-
-        // Combine all phi value to master processor (MPI_rank == 0)
-        // tec_phi_comm(phid0, phi0_vec, v2d_map, mesh);
-
-        if (rankvalues == 0) {
-
-            cal_color(this->global_vertex_connectivity, scalar_field, color,
-                      color_num);
-            for (int i = 0; i < color_num.size(); i++) {
-                std::cout << "    Volume color " << i
-                          << " number: " << color_num[i] << std::endl;
-            }
-
-            phi_sign.resize(phi0_vec.size());
-            // TODO: set a strictor criteria for the number of vertices
-            int num_tol = 100;
-            for (int i = 0; i < phi_sign.size(); i++) {
-                int color_nk = color_num[color[i] - 1];
-                if (color_nk >= num_tol) {
-                    phi_sign[i] = 1;
-                }
-                else {
-                    phi_sign[i] = -1;
-                }
-            }
+        if (rankvalues) {
+            return;
         }
 
-        details::MPI_broadcast(MPI_COMM_WORLD, phi_sign);
+        std::vector<std::vector<std::size_t>> components;
+        connected_components(this->global_vertex_connectivity, components,
+                             [&](std::size_t i, std::size_t j) {
+                                 return scalar_field[i] * scalar_field[j] > 0.0;
+                             });
+        for (int i = 0; i < color_num.size(); i++) {
+            std::cout << "    Volume color " << i << " number: " << color_num[i]
+                      << std::endl;
+        }
+
+        for (const auto &patch : components) {
+            if (patch.size() < num_tol)
+                continue;
+            std::for_each(patch.begin(), patch.end(),
+                          [&](std::size_t i) { scalar_field[i] *= -1; });
+        }
     }
 
     // void phi_sign_init(std::vector<int> &phi_sign,
@@ -1338,7 +1222,9 @@ template <> struct Redistance<TetrahedronMesh> {
         // compute_normal(vx_res, vy_res, vz_res, c1_res, c2_res, c3_res,
         //                vertex_nor_x, vertex_nor_y, vertex_nor_z,
         //                vertex_nor_num, vertex_nor_area);
-        compute_normal_vector(isosurface, /***/);
+        std::vector<Point3D> vertices;
+        std::vector<Point3D> normal_vectors;
+        compute_normal_vector(isosurface, vertices, normal_vectors);
         // Laplace smoothing
         // laplace_smooth(vx_res, vy_res, vz_res, c1_res, c2_res, c3_res);
 
@@ -1350,13 +1236,10 @@ template <> struct Redistance<TetrahedronMesh> {
         // filter_point(vx_res, vy_res, vz_res, vertex_nor_x, vertex_nor_y,
         //              vertex_nor_z, vertex_nor_num, vertex_nor_area);
 
-        // Compute volume color
-        if (vol_color_flag == 1) {
-            compute_vol_color(mesh, phid0, phi_sign, d2v_map, v2d_map);
-        }
-        else {
-            // phi_sign_init(phi_sign, mesh);
-        }
+        // The volume mesh is divided by the phi=0 surface. Traverse the
+        // vertices of the mesh and color the vertices on the two sides of the
+        // surface.
+        compute_vol_color(mesh, phid0, phi_sign, d2v_map, v2d_map);
 
         // if(ismaster) info("Start to compute levelset distance.");
         //  Levelset redistancing calculation

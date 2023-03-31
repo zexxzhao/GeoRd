@@ -20,7 +20,7 @@ inline int MPI_size(MPI_Comm comm = MPI_COMM_WORLD) {
     return size;
 }
 
-template <typename T> static MPI_Datatype MPI_type() {
+template <typename T> constexpr MPI_Datatype MPI_type() {
     if constexpr (std::is_same<T, float>::value) {
         reutrn MPI_FLOAT;
     }
@@ -41,9 +41,6 @@ template <typename T> static MPI_Datatype MPI_type() {
     }
     else if constexpr (std::is_same<T, unsigned long>::value) {
         return MPI_UNSIGNED_LONG;
-    }
-    else if constexpr (std::is_same<T, size_t>::value) {
-        return MPI_type<size_t>();
     }
     else {
         error("Unknown MPI type: %s\n", typeid(T).name());
@@ -267,63 +264,101 @@ void MPI_alltoall(MPI_Comm comm, const std::vector<std::vector<T>> &in,
                   comm);
 }
 
-template <typename T> struct MPI_DataDistributor {
-    std::vector<T> data;
-    std::vector<std::vector<int>> proc_id;
+template <
+    typename Key, typename Value, typename Hash = std::hash<Key>,
+    typename KeyEqual = std::equal_to<Key>,
+    std::enable_if<std::is_arithmetic<Key>::value and std::is_arithmetic<Value>,
+                   int>::type = 0>
+struct MPI_DataDistributor {
+    // Key + rank
+    using ComposedKey = std::pair<Key, int>;
+
+    struct ComposedKeyHash {
+        Hash hash;
+        std::size_t operator()(const ComposedKey &k) const {
+            return hash(k.first) ^ std::hash<int>()(k.second);
+        }
+    };
+    struct ComposedKeyEqual {
+        KeyEqual equal;
+        bool operator()(const ComposedKey &a, const ComposedKey &b) const {
+            return a.second == b.second && equal(a.first, b.first);
+        }
+    };
+    using ComposedKeyMap =
+        std::unordered_map<ComposedKey, Value, ComposedKeyHash,
+                           ComposedKeyEqual>;
+
     int root;
+    MPI_Comm comm;
+    std : vector<int> rank;
+    std::vector<Key> keys;
+    std::vector<Value> values;
 
-    template <typename Index,
-              std::enable_if<std::is_integral<Index>::value, int> = 0>
-    MPI_DataDistributor(const std::vector<T> &shared_data,
-                        const std::vector<Index> &gid, int root_rank = 0)
-        : root(root_rank) {
-        std::vector<Index> gid_tmp;
-        MPI_gather(MPI_COMM_WORLD, gid, gid_tmp);
-        std::vector<T> data_tmp;
-        MPI_gather(MPI_COMM_WORLD, send_data, data_tmp);
-        // gather the processor id
-        std::vector<int> proc_id(gid.size(), MPI_rank(MPI_COMM_WORLD));
-        std::vector<int> proc_id_tmp;
-        MPI_gather(MPI_COMM_WORLD, proc_id, proc_id_tmp);
+    MPI_DataDistributor(MPI_Comm comm, int root = 0) : root(root), comm(comm) {}
+    // TODO: everything
+    void gather(const std::vector<Key> &keys,
+                const std::vector<Value> &values) {
+        assert(keys.size() == values.size());
+        std::vector<Key> keys_recv;
+        MPI_gather(comm, keys, keys_recv, root);
+        std::vector<Value> values_recv;
+        MPI_gather(comm, values, values_recv, root);
+        std::vector<int> ranks(keys.size(), MPI_rank(comm));
+        std::vector<int> ranks_recv;
+        MPI_gather(comm, ranks, ranks_recv, root);
 
-        // save the data and processor id
-        if (MPI_rank(MPI_COMM_WORLD) != 0) {
+        rank.clear();
+        keys.clear();
+        values.clear();
+
+        if (MPI_rank(comm))
             return;
-        }
-        auto n = std::max_element(gid_tmp.begin(), gid_tmp.end()) + 1;
-        data.assign(n, std::numeric_limits<T>::nan());
-        for (auto i = 0; i < gid_tmp.size(); i++) {
-            proc_id[gid_tmp[i]].push_back(proc_id_tmp[i]);
 
-            auto &d = data[gid_tmp[i]];
-            if (std::isnan(d)) {
-                d = data_tmp[i];
+        ComposedKeyMap data;
+        assert(keys_recv.size() == values_recv.size());
+        assert(keys_recv.size() == ranks_recv.size());
+        for (size_t i = 0; i < keys_recv.size(); i++) {
+            auto it = data.find(std::make_pair(keys_recv[i], ranks_recv[i]));
+            if (it != data.end()) {
+                if (it->second != values_recv[i])
+                    throw std::runtime_error("Inconsistent data");
+                it->second += values_recv[i];
             }
-            else if (d != data_tmp[i]) {
-                throw std::runtime_error("Inconsistent data");
+            else {
+                data[std::make_pair(keys_recv[i], ranks_recv[i])] =
+                    values_recv[i];
             }
+            data[std::make_pair(keys_recv[i], ranks_recv[i])] = values_recv[i];
         }
     }
 
-    std::vector<T> &get_data() {
-        if (MPI_rank(MPI_COMM_WORLD) == 0) {
-            return data;
-        }
-        else {
-            throw std::runtime_error("Only rank 0 can access the data");
-        }
-    }
-
-    void distribute_data(std::vector<T> &recv_data) const {
-        // reshape the data to be sent
-        std::vector<std::vector<T>> send_data(MPI_size());
-        for (auto i = 0; i < proc_id.size(); i++) {
-            for (auto j = 0; j < proc_id[i].size(); j++) {
-                send_data[proc_id[i][j]].push_back(data[i]);
+    void scatter(std::vector<Key> &keys, std::vector<Value> &values) {
+        std::vector<std::vector<Key>> keys_send;
+        std::vector<std::vector<Value>> values_send;
+        const auto size = MPI_size(comm);
+        if (MPI_rank(comm) == root) {
+            keys_send.resize(size);
+            values_send.resize(size);
+            for (const auto &kv : data) {
+                keys_send[kv.first.second].push_back(kv.first.first);
+                values_send[kv.first.second].push_back(kv.second);
             }
         }
-        // send the send_data from processor 0 to the corresponding processors
-        MPI_scatter(MPI_COMM_WORLD, send_data, recv_data);
+        MPI_scatter(comm, keys_send, keys, root);
+        MPI_scatter(comm, values_send, values, root);
+    }
+    std::vector<Key> get_keys() const {
+        std::vector<Key> keys;
+        for (const auto &kv : data)
+            keys.push_back(kv.first.first);
+        return keys;
+    }
+    std::vector<Value> get_values() const {
+        std::vector<Value> values;
+        for (const auto &kv : data)
+            values.push_back(kv.second);
+        return values;
     }
 };
 
