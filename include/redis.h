@@ -931,6 +931,7 @@ template <> struct Redistance<TetrahedronMesh> {
     SurfaceMesh free_surface_mesh;
     Graph global_vertex_connectivity;
     std::vector<double> scalar_field;
+    std::vector<double> phi;
 
     Redistance(const VolumeMesh &mesh) : domain(mesh) {
         get_vertex_connectivity_in_global_patch(mesh,
@@ -946,10 +947,14 @@ template <> struct Redistance<TetrahedronMesh> {
         for (int ivtx = 0; ivtx < domain.vertices.size(); ivtx++) {
             gid.push_back(mesh.vertex_local2global[ivtx]);
         }
-        dist.gather(gid, phid0);
-        scalar_field = dist.get_value();
+        phi = phid0;
+        dist.gather(gid, phi);
+        scalar_field = dist.values;
         // flip the sign of the levelset function in small droplets
         overwrite_small_droplets(small_droplet_tolerance);
+        dist.scatter(gid, phi);
+
+        get_free_surface(domain, phi, isosurface);
     }
 
     // Compute levelset sign distance function here
@@ -1210,7 +1215,6 @@ template <> struct Redistance<TetrahedronMesh> {
 
         // Triangulation of the phi=0
         // add_triangle(mesh, phid0, phi_vertex, phi_connect);
-        get_free_surface(mesh, phid0, isosurface);
 
         // if(ismaster) info("Start to combine triangle.");
         //  Combine triangle from different processor and remove duplicate
@@ -1239,7 +1243,6 @@ template <> struct Redistance<TetrahedronMesh> {
         // The volume mesh is divided by the phi=0 surface. Traverse the
         // vertices of the mesh and color the vertices on the two sides of the
         // surface.
-        compute_vol_color(mesh, phid0, phi_sign, d2v_map, v2d_map);
 
         // if(ismaster) info("Start to compute levelset distance.");
         //  Levelset redistancing calculation
