@@ -270,95 +270,74 @@ template <
     std::enable_if<std::is_arithmetic<Key>::value and std::is_arithmetic<Value>,
                    int>::type = 0>
 struct MPI_DataDistributor {
-    // Key + rank
-    using ComposedKey = std::pair<Key, int>;
 
-    struct ComposedKeyHash {
-        Hash hash;
-        std::size_t operator()(const ComposedKey &k) const {
-            return hash(k.first) ^ std::hash<int>()(k.second);
-        }
-    };
-    struct ComposedKeyEqual {
-        KeyEqual equal;
-        bool operator()(const ComposedKey &a, const ComposedKey &b) const {
-            return a.second == b.second && equal(a.first, b.first);
-        }
-    };
-    using ComposedKeyMap =
-        std::unordered_map<ComposedKey, Value, ComposedKeyHash,
-                           ComposedKeyEqual>;
+    template<typename T = Value>
+    using Map = std::unordered_map<Key, T, Hash, KeyEqual>;
 
     int root;
     MPI_Comm comm;
-    std : vector<int> rank;
+    std::vector<std::vector<int>> rank;
     std::vector<Key> keys;
     std::vector<Value> values;
+    Map<std::vector<int>> ranks;
 
     MPI_DataDistributor(MPI_Comm comm, int root = 0) : root(root), comm(comm) {}
-    // TODO: everything
-    void gather(const std::vector<Key> &keys,
-                const std::vector<Value> &values) {
+
+    void gather(const std::vector<Key> &keys_send, const std::vector<Value> &values_send) {
         assert(keys.size() == values.size());
+        const int size = MPI_size(comm);
+
         std::vector<Key> keys_recv;
-        MPI_gather(comm, keys, keys_recv, root);
         std::vector<Value> values_recv;
-        MPI_gather(comm, values, values_recv, root);
-        std::vector<int> ranks(keys.size(), MPI_rank(comm));
-        std::vector<int> ranks_recv;
-        MPI_gather(comm, ranks, ranks_recv, root);
+        std::vector<int> rank_send(keys_send.size(), MPI_rank(comm));
+        std::vector<int> rank_recv;
+        MPI_gather(comm, keys_send, keys_recv, root);
+        MPI_gather(comm, values_send, values_recv, root);
+        MPI_gather(comm, rank_send, rank_recv, root);
 
-        rank.clear();
-        keys.clear();
-        values.clear();
-
-        if (MPI_rank(comm))
-            return;
-
-        ComposedKeyMap data;
-        assert(keys_recv.size() == values_recv.size());
-        assert(keys_recv.size() == ranks_recv.size());
-        for (size_t i = 0; i < keys_recv.size(); i++) {
-            auto it = data.find(std::make_pair(keys_recv[i], ranks_recv[i]));
-            if (it != data.end()) {
-                if (it->second != values_recv[i])
-                    throw std::runtime_error("Inconsistent data");
-                it->second += values_recv[i];
+        if (MPI_rank(comm) == root) {
+            Map<Value> map;
+            assert(keys_recv.size() == values_recv.size());
+            for (size_t i = 0; i < keys_recv.size(); i++) {
+                auto it = map.find(keys_recv[i]);
+                if (it == map.end()) {
+                    map[keys_recv[i]] = values_recv[i];
+                } else if(it->second != values_recv[i]) {
+                    std::cerr << "Error: key " << keys_recv[i] << " has different values on different processes" << std::endl;
+                    std::exit(1);
+                }
+                ranks[keys_recv[i]].push_back(rank_recv[i]);
             }
-            else {
-                data[std::make_pair(keys_recv[i], ranks_recv[i])] =
-                    values_recv[i];
+            // copy map to keys and values
+            keys.clear();
+            keys.reserve(map.size());
+            values.clear();
+            values.reserve(map.size());
+            for (auto &kv : map) {
+                keys.push_back(kv.first);
+                values.push_back(kv.second);
             }
-            data[std::make_pair(keys_recv[i], ranks_recv[i])] = values_recv[i];
         }
     }
 
-    void scatter(std::vector<Key> &keys, std::vector<Value> &values) {
+    void scatter(std::vector<Key> &keys_recv, std::vector<Value> &values_recv) const {
+        keys_recv.clear();
+        values_recv.clear();
+        const int size = MPI_size(comm);
         std::vector<std::vector<Key>> keys_send;
         std::vector<std::vector<Value>> values_send;
-        const auto size = MPI_size(comm);
         if (MPI_rank(comm) == root) {
             keys_send.resize(size);
             values_send.resize(size);
-            for (const auto &kv : data) {
-                keys_send[kv.first.second].push_back(kv.first.first);
-                values_send[kv.first.second].push_back(kv.second);
+            // assemble keys and values for each processer
+            for (size_t i = 0; i < keys.size(); i++) {
+                for (int r : ranks.at(keys[i])) {
+                    keys_send[r].push_back(keys[i]);
+                    values_send[r].push_back(values[i]);
+                }
             }
         }
-        MPI_scatter(comm, keys_send, keys, root);
-        MPI_scatter(comm, values_send, values, root);
-    }
-    std::vector<Key> get_keys() const {
-        std::vector<Key> keys;
-        for (const auto &kv : data)
-            keys.push_back(kv.first.first);
-        return keys;
-    }
-    std::vector<Value> get_values() const {
-        std::vector<Value> values;
-        for (const auto &kv : data)
-            values.push_back(kv.second);
-        return values;
+        MPI_scatter(comm, keys_send, keys_recv, root);
     }
 };
 
