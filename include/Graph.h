@@ -93,5 +93,44 @@ void connected_components(
     }
 }
 
+// get the path from the source to the target
+template <typename Vertex,
+          typename Callable = std::function<bool(Vertex, Vertex)>,
+          typename Graph = std::enable_if<std::is_arithmetic<Vertex>::value,
+                                          UndirectedGraph<Vertex>>::type>
+void get_path(
+    const Graph &graph, Vertex source, Vertex target, std::vector<Vertex> &path,
+    Callable &&additional_restriction = [](Vertex, Vertex) { return true; }) {
+    std::vector<Vertex> stack;
+    std::vector<Vertex> visited;
+    std::unorder_map<Vertex, Vertex> parent;
+    stack.push_back(source);
+    while (!stack.empty()) {
+        auto vertex_id = stack.back();
+        stack.pop_back();
+        if (std::find(visited.begin(), visited.end(), vertex_id) ==
+            visited.end()) {
+            visited.push_back(vertex_id);
+            for (auto neighbor_id : graph.at(vertex_id)) {
+                if (additional_restriction(vertex_id, neighbor_id)) {
+                    parent[neighbor_id] = vertex_id;
+                    stack.push_back(neighbor_id);
+                }
+            }
+        }
+    }
+    path.clear();
+    auto vertex_id = target;
+    // if the target is not reachable from the source
+    if (parent.find(vertex_id) == parent.end()) {
+        return;
+    }
+    while (vertex_id != source) {
+        path.push_back(vertex_id);
+        vertex_id = parent[vertex_id];
+    }
+    path.push_back(source);
+    std::reverse(path.begin(), path.end());
+}
 } // namespace GeoRd
 #endif // __GRAPH_H__

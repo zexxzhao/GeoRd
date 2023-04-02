@@ -67,6 +67,25 @@ void MPI_gather(MPI_Comm comm, const std::vector<T> &in, std::vector<T> &out,
                 offsets.data(), MPI_type<T>(), recv_proc, comm);
 }
 
+#include "Point3D.h"
+inline void MPI_gather(MPI_Comm comm, const std::vector<Point3D> &in,
+                       std::vector<Point3D> &out) {
+    using DataType = typename Point3D::AtomizedType;
+    std::vector<DataType> in_data, out_data;
+    in_data.reserve(in.size() * 3);
+    for (const auto &p : in) {
+        in_data.push_back(p.x);
+        in_data.push_back(p.y);
+        in_data.push_back(p.z);
+    }
+    MPI_gather(comm, in_data, out_data);
+    out.reserve(out_data.size() / 3);
+    for (size_t i = 0; i < out.size(); ++i) {
+        out.emplace_back(out_data[i * 3], out_data[i * 3 + 1],
+                         out_data[i * 3 + 2]);
+    }
+}
+
 template <typename T>
 void MPI_allgatherv(MPI_Comm comm, const std::vector<T> &in,
                     std::vector<T> &out) {
@@ -271,7 +290,7 @@ template <
                    int>::type = 0>
 struct MPI_DataDistributor {
 
-    template<typename T = Value>
+    template <typename T = Value>
     using Map = std::unordered_map<Key, T, Hash, KeyEqual>;
 
     int root;
@@ -283,7 +302,8 @@ struct MPI_DataDistributor {
 
     MPI_DataDistributor(MPI_Comm comm, int root = 0) : root(root), comm(comm) {}
 
-    void gather(const std::vector<Key> &keys_send, const std::vector<Value> &values_send) {
+    void gather(const std::vector<Key> &keys_send,
+                const std::vector<Value> &values_send) {
         assert(keys.size() == values.size());
         const int size = MPI_size(comm);
 
@@ -302,8 +322,11 @@ struct MPI_DataDistributor {
                 auto it = map.find(keys_recv[i]);
                 if (it == map.end()) {
                     map[keys_recv[i]] = values_recv[i];
-                } else if(it->second != values_recv[i]) {
-                    std::cerr << "Error: key " << keys_recv[i] << " has different values on different processes" << std::endl;
+                }
+                else if (it->second != values_recv[i]) {
+                    std::cerr << "Error: key " << keys_recv[i]
+                              << " has different values on different processes"
+                              << std::endl;
                     std::exit(1);
                 }
                 ranks[keys_recv[i]].push_back(rank_recv[i]);
@@ -320,7 +343,8 @@ struct MPI_DataDistributor {
         }
     }
 
-    void scatter(std::vector<Key> &keys_recv, std::vector<Value> &values_recv) const {
+    void scatter(std::vector<Key> &keys_recv,
+                 std::vector<Value> &values_recv) const {
         keys_recv.clear();
         values_recv.clear();
         const int size = MPI_size(comm);

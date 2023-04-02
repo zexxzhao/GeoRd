@@ -144,7 +144,7 @@ int compute_diagonal_direction(std::vector<Point> &phi_tmp_vertex) {
 template <typename VolumeMesh>
 void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
                   std::vector<Point3D> &phi_vertex,
-                  std::vector<std::vector<int>> &phi_connect) {
+                  std::vector<int> &phi_connect) {
     // std::vector<Point>             phi_tmp_vertex;
     // std::vector<Point>             phi_tet_vertex;
 
@@ -257,7 +257,9 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
                                                     tri_con_tmp, phival);
 
             // add triangle
-            phi_connect.push_back(tri_con_tmp);
+            // phi_connect.push_back(tri_con_tmp);
+            phi_connect.insert(phi_connect.end(), tri_con_tmp.begin(),
+                               tri_con_tmp.end());
 
             // debug
             /*
@@ -323,7 +325,9 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
                     phi_vertex, phi_tet_vertex, tri_con_tmp, phival);
 
                 // add triangle
-                phi_connect.push_back(tri_con_tmp);
+                // phi_connect.push_back(tri_con_tmp);
+                phi_connect.insert(phi_connect.end(), tri_con_tmp.begin(),
+                                   tri_con_tmp.end());
             }
         }
     }
@@ -860,19 +864,54 @@ void compute_normal(
     details::MPI_broadcast(MPI_COMM_WORLD, vertex_nor_area);
 }
 
-} // namespace details
+// clean the triangles
+template <typename T, std::enable_if<std::is_integral<T>::value, int>::type = 0>
+void clean_triangles(std::vector<Point3D> &vertices, std::vector<T> &elements) {
 
-template <typename VolumeMesh, typename SurfaceMesh>
-void get_free_surface(const VolumeMesh &mesh, const std::vector<double> &phid0,
-                      SurfaceMesh &surface) {
-    std::vector<Point3D> vertices;
-    std::vector<std::vector<int>> elements;
-    add_triangle(mesh, phid0, vertices, elements);
-    surface.vertices = std::move(vertices);
-    // flatten elements in to surface.elements
-    surface.elements.reserve(elements.size() * 3);
-    for (const auto &e : elements) {
-        surface.elements.insert(surface.elements.end(), e.begin(), e.end());
+    // remove duplicate vertices
+    details::UnorderedMap<Point3D, std::size_t> vertex_map;
+    std::size_t vertex_counter = 0;
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        auto it = vertex_map.find(vertices[i]);
+        if (it != vertex_map.end()) {
+            continue;
+        }
+        vertex_map[vertices[i]] = vertex_counter;
+        ++vertex_counter;
+    }
+
+    // remove duplicate triangles
+    using Triangle = details::Triple<T>;
+    details::UnorderedSet<Triangle> triangle_set;
+    for (std::size_t i = 0; i < elements.size(); i += 3) {
+        Triangle triangle(elements[i], elements[i + 1], elements[i + 2]);
+        auto it = triangle_set.find(triangle);
+        if (it != triangle_set.end()) {
+            continue;
+        }
+        triangle_set.insert(triangle);
+    }
+
+    // update triangle indices following the new vertex indices
+    std::for_each(triangle_set.begin(), triangle.end(), [&](Triangle &t) {
+        t[0] = vertex_map[vertices[t[0]]];
+        t[1] = vertex_map[vertices[t[1]]];
+        t[2] = vertex_map[vertices[t[2]]];
+    });
+
+    // update vertices
+    vertices.resize(vertex_map.size());
+    for (auto &kv : vertex_map) {
+        vertices[kv.second] = kv.first;
+    }
+    // update triangles
+    elements.resize(triangle_set.size() * 3);
+    std::size_t triangle_counter = 0;
+    for (auto &t : triangle_set) {
+        elements[triangle_counter * 3 + 0] = t[0];
+        elements[triangle_counter * 3 + 1] = t[1];
+        elements[triangle_counter * 3 + 2] = t[2];
+        ++triangle_counter;
     }
 }
 
@@ -921,6 +960,26 @@ void compute_normal_vector(const TriangleMesh &mesh,
     }
 }
 
+template <typename VolumeMesh, typename SurfaceMesh>
+void get_free_surface(const VolumeMesh &mesh, const std::vector<double> &phid0,
+                      SurfaceMesh &surface) {
+    std::vector<Point3D> vertices;
+    std::vector<int> elements;
+    add_triangle(mesh, phid0, vertices, elements);
+    // Gather vertices and elements
+    std::vector<Point3D> vertices_all;
+    std::vector<int> elements_all;
+    details::MPI_allgather(MPI_COMM_WORLD, vertices, vertices_all);
+    details::MPI_allgather(MPI_COMM_WORLD, elements, elements_all);
+    // Clean triangles
+    details::clean_triangles(vertices_all, elements_all);
+    // Place the result into the surface mesh
+    surface.vertices = std::move(vertices_all);
+    surface.elements = std::move(elements_all);
+}
+
+} // namespace details
+
 template <typename = void> struct Redistance {};
 
 template <> struct Redistance<TetrahedronMesh> {
@@ -928,7 +987,11 @@ template <> struct Redistance<TetrahedronMesh> {
     using SurfaceMesh = TriangleMesh;
 
     VolumeMesh domain;
-    SurfaceMesh free_surface_mesh;
+    struct Representation {
+        std::vector<Point3D> vertices;
+        std::vector<Point3D> normals;
+    };
+    Representation representation;
     Graph global_vertex_connectivity;
     std::vector<double> scalar_field;
     std::vector<double> phi;
@@ -951,206 +1014,59 @@ template <> struct Redistance<TetrahedronMesh> {
         dist.gather(gid, phi);
         scalar_field = dist.values;
         // flip the sign of the levelset function in small droplets
-        overwrite_small_droplets(small_droplet_tolerance);
+        if (details::MPI_rank() == 0) {
+            std::vector<std::vector<std::size_t>> volume_components;
+            overwrite_small_droplets(small_droplet_tolerance,
+                                     volume_components);
+            // TODO: assign signs to scalar_field
+        }
         dist.scatter(gid, phi);
 
-        get_free_surface(domain, phi, isosurface);
+        // Generate the free surface mesh
+        SurfaceMesh free_surface_mesh;
+        get_free_surface(domain, phi, free_surface_mesh);
+        // Compute the normal vector of the free surface
+        details::compute_normal_vector(
+            free_surface_mesh, representation.vertices, representation.normals);
     }
 
-    // Compute levelset sign distance function here
-    void compute_levelset_distance(const VolumeMesh &mesh,
-                                   std::vector<double> &phid0,
-                                   const std::vector<int> &phi_factor,
-                                   const std::vector<std::size_t> &d2v_map,
-                                   const std::vector<double> &vx_res,
-                                   const std::vector<double> &vy_res,
-                                   const std::vector<double> &vz_res,
-                                   const std::vector<double> &vertex_nor_x,
-                                   const std::vector<double> &vertex_nor_y,
-                                   const std::vector<double> &vertex_nor_z) {
-        std::vector<Point3D> phi_inter_glo;
+    // Assign the level set function to the vertices of the mesh
+    void redistance(std::vector<double> &phid, double eps) const {
 
-        // Start to calculate the distance between point and point cloud
-        // (bounding box) Copy to point vector
-        for (int iphi = 0; iphi < vx_res.size(); iphi++) {
-            phi_inter_glo.push_back(
-                Point(vx_res[iphi], vy_res[iphi], vz_res[iphi]));
-        }
+        // Ensure positive eps
+        eps = std::abs(eps);
 
-        bool ismaster = details::MPI_rank(MPI_COMM_WORLD) == 0;
-        if (ismaster and phi_inter_glo.empty()) {
-            std::cout
-                << "The triangulization of phi=0 has zero point. "
-                << "Please check the threshold in bubble dropping process.";
-        }
+        // Build the octree
+        Octree<Point3D> tree;
+        tree.set_box(representation.vertices);
+        tree.insert_point(representation.vertices);
 
-        // Get the bounding box for point cloud
-        OctreePoint phi0_Bound_Box_Tree;
-        phi0_Bound_Box_Tree.set_box(phi_inter_glo);
-        phi0_Bound_Box_Tree.insert_point(phi_inter_glo);
-
-        // Get the value of phi in each processor
-        // std::vector<double> phid0_vec;
-        // phid0->vector()->get_local(phid0_vec);
-        auto &phid0_vec = phid0;
-
-        double phi_sign;
-        for (int iphi = 0; iphi < phid0_vec.size(); iphi++) {
-            // Get the vertex index from dof index
-            std::size_t phi_ind = d2v_map[iphi];
-
-            // Get the coordinate of corresponding point
-            // Point3D
-            // tmp_point(local_cor[3*phi_ind],local_cor[3*phi_ind+1],local_cor[3*phi_ind+2]);
-            const auto &tmp_point = mesh.vertex[phi_ind];
-
-            // Use bounding box to get the closest distance from point to point
-            // cloud
-            std::pair<int, double> dist_pair;
-            int oct_tree_index;
-            double oct_tree_dist;
-            phi0_Bound_Box_Tree.search_point(tmp_point, oct_tree_index,
-                                             oct_tree_dist);
-
-            dist_pair = std::make_pair(oct_tree_index, oct_tree_dist);
-
-            // Get the nearest point in the cloud
-            Point3D near_point_cloud = phi_inter_glo[dist_pair.first];
-
-            // Calculate the averaged normal on vertex
-            Point3D nor_vertex_cal{vertex_nor_x[dist_pair.first],
-                                   vertex_nor_y[dist_pair.first],
-                                   vertex_nor_z[dist_pair.first]};
-
-            // Get the line connecting vertex point and near point in cloud.
-
-            // Calculate projection length over vertex normal direction
-            double dist_proj =
-                std::abs(nor_vertex_cal.dot(tmp_point - near_point_cloud));
-
-            /*
-            if( near_edge.dot(nor_vertex_cal) > 0.0 ){
-                phi_sign =  1.0;
+        // Compute the distance between the vertices and the free surface
+        for (int ivtx = 0; ivtx < phid.size(); ++ivtx) {
+            auto p = domain.vertices[ivtx];
+            int idx_nearest;
+            double distance_nearest;
+            tree.search_point(p, idx_nearest, distance_nearest);
+            if (std::abs(phid[ivtx]) < eps) {
+                const auto p_nearest = representation.vertices[idx_nearest];
+                const auto n_nearest = representation.normals[idx_nearest];
+                distance_nearest = std::abs((p - p_nearest).dot(n_nearest));
             }
-            else{
-                phi_sign = -1.0;
+            if (phid[ivtx] < 0) {
+                distance_nearest = -distance_nearest;
             }
-            */
-
-            if (phid0_vec[iphi] > 0.0) {
-                phi_sign = 1.0;
-            }
-            else {
-                phi_sign = -1.0;
-            }
-
-            // Change dropped point sign
-            Vertex phi_ver = Vertex(*mesh, phi_ind);
-            double phi_factor_val = phi_factor[phi_ver.global_index()] * 1.0;
-            phi_sign = phi_sign * phi_factor_val;
-
-            double phi_mag = std::abs(phid0_vec[iphi]);
-            double phi_tol = 1.5 * epslen_;
-
-            if (phi_mag > phi_tol) {
-                // Use distance to point cloud
-                phid0_vec[iphi] = phi_sign * dist_pair.second;
-            }
-            else {
-                // Use projected distance
-                phid0_vec[iphi] = phi_sign * dist_proj;
-            }
-
-            /*
-            // correction for coarse mesh
-            if( std::abs( tmp_point.y() ) > 1.0e-4 ){
-                            if( std::abs( tmp_point.z() ) < 4e-5 ){
-                                    phid0_vec[iphi] = 0.0 - tmp_point.z();
-                            }
-                    }
-            */
+            phid[ivtx] = distance_nearest;
         }
     }
 
-    // Compute edge connectivity
-    void compute_connect(std::vector<std::set<int>> &node_connect_glo,
-                         std::shared_ptr<Mesh> &mesh) {
-
-        // Get some some mesh
-        const std::size_t tdim = mesh->topology().dim();
-        const std::size_t gdim = mesh->geometry().dim();
-        const std::size_t num_local_vertices = mesh->num_entities(0);
-        const std::size_t num_global_vertices = mesh->num_entities_global(0);
-
-        std::vector<int> node_connect_loc_a;
-        std::vector<int> node_connect_loc_b;
-        std::vector<int> node_connect_glo_a;
-        std::vector<int> node_connect_glo_b;
-        std::vector<std::set<int>> node_connect_loc(num_global_vertices,
-                                                    std::set<int>());
-
-        node_connect_glo.resize(num_global_vertices);
-        int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
-
-        // Compute connectivity
-        int cell_ind = 0;
-        std::vector<int> cell_vec(4, 0);
-        for (CellIterator cell(*mesh); !cell.end(); ++cell) {
-            int vertex_ind = 0;
-            for (VertexIterator v(*cell); !v.end(); ++v) {
-                int global_ind = v->global_index();
-                cell_vec[vertex_ind] = global_ind;
-                vertex_ind++;
-            }
-
-            for (int i = 0; i < 4; i++) {
-                for (int j = 0; j < 4; j++) {
-                    if (i == j)
-                        continue;
-
-                    node_connect_loc[cell_vec[i]].insert(cell_vec[j]);
-                    node_connect_loc[cell_vec[j]].insert(cell_vec[i]);
-                }
-            }
-            cell_ind++;
-        }
-
-        std::set<int>::iterator node_it;
-        for (int i = 0; i < num_global_vertices; i++) {
-            for (node_it = node_connect_loc[i].begin();
-                 node_it != node_connect_loc[i].end(); ++node_it) {
-                int val = *node_it;
-                node_connect_loc_a.push_back(i);
-                node_connect_loc_b.push_back(val);
-            }
-        }
-
-        details::MPI_gather(MPI_COMM_WORLD, node_connect_loc_a,
-                            node_connect_glo_a);
-        details::MPI_gather(MPI_COMM_WORLD, node_connect_loc_b,
-                            node_connect_glo_b);
-
-        if (rankvalues == 0) {
-            for (int i = 0; i < node_connect_glo_a.size(); i++) {
-                node_connect_glo[node_connect_glo_a[i]].insert(
-                    node_connect_glo_b[i]);
-            }
-        }
-    }
-
-    // void redistance_prep(std::shared_ptr<Mesh> &mesh) {
-    //  tec_map_compute(this->tec_comm_local_ind_full,this->tec_comm_local_ind_reduce,this->tec_comm_global_ind_reduce_loc_glo,mesh);
-    //  compute_connect(this->elem_connect, mesh);
-    // }
-
-    void overwrite_small_droplets(int num_tol) {
+    void overwrite_small_droplets(
+        int num_tol, std::vector<std::vector<std::size_t>> &components) {
 
         int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
         if (rankvalues) {
             return;
         }
 
-        std::vector<std::vector<std::size_t>> components;
         connected_components(this->global_vertex_connectivity, components,
                              [&](std::size_t i, std::size_t j) {
                                  return scalar_field[i] * scalar_field[j] > 0.0;
@@ -1159,105 +1075,93 @@ template <> struct Redistance<TetrahedronMesh> {
             std::cout << "    Volume color " << i << " number: " << color_num[i]
                       << std::endl;
         }
+        // get inter-patch connectivity
+        std::vector<std::vector<std::size_t>> inter_patch_connectivity;
+        get_inter_patch_connectivity(this->global_vertex_connectivity,
+                                     inter_patch_connectivity);
 
-        for (const auto &patch : components) {
-            if (patch.size() < num_tol)
-                continue;
-            std::for_each(patch.begin(), patch.end(),
-                          [&](std::size_t i) { scalar_field[i] *= -1; });
+        // attach the small droplets to the large neighboring droplets
+        // 1. find the small droplets ID
+        std::vector<std::size_t> small_droplets_id;
+        for (std::size_t i = 0; i < components.size(); ++i) {
+            if (components[i].size() < num_tol) {
+                small_droplets_id.push_back(i);
+            }
         }
+        // 2. find the corresponding large neighboring droplets ID
+        std::vector<std::size_t> large_droplets_id(small_droplets_id.size());
+        std::vector<bool> found(small_droplets_id.size(), false);
+        do {
+            for (std::size_t i = 0; i < small_droplets_id.size(); ++i) {
+                if (found[i]) {
+                    continue;
+                }
+                // find the large neighboring droplets ID
+                const auto neighbors =
+                    inter_patch_connectivity[small_droplets_id[i]];
+                for (const auto &neighbor : neighbors) {
+                    if (components[neighbor].size() >= num_tol) {
+                        large_droplets_id[i] = neighbor;
+                        found[i] = true;
+                        break;
+                    }
+                    if (found[neighbor]) {
+                        large_droplets_id[i] = large_droplets_id[neighbor];
+                        found[i] = true;
+                        break;
+                    }
+                }
+            }
+        } while (std::find(found.begin(), found.end(), false) != found.end());
+
+        // merge the small droplets into the large neighboring droplets
+        for (std::size_t i = 0; i < small_droplets_id.size(); ++i) {
+            auto &small_droplet = components[small_droplets_id[i]];
+            auto &large_droplet = components[large_droplets_id[i]];
+            large_droplet.insert(large_droplet.end(), small_droplet.begin(),
+                                 small_droplet.end());
+            small_droplet.clear();
+        }
+        // erase the empty components
+        components.erase(std::remove_if(components.begin(), components.end(),
+                                        [](const std::vector<std::size_t> &c) {
+                                            return c.empty();
+                                        }),
+                         components.end());
     }
 
-    // void phi_sign_init(std::vector<int> &phi_sign,
-    //                    std::shared_ptr<Mesh> &mesh) {
-    //     const std::size_t num_global_vertices = mesh->num_entities_global(0);
-
-    //     phi_sign.resize(num_global_vertices);
-    //     std::fill(phi_sign.begin(), phi_sign.end(), 1);
-    // }
-
-    void geo_redistance(std::shared_ptr<Mesh> &mesh,
-                        std::shared_ptr<Function> phid0,
-                        std::vector<std::size_t> &d2v_map,
-                        std::vector<dolfin::la_index> &v2d_map) {
-        // debug use
-        /*
-        {
-            File phifile("comp/phi_ini.pvd");
-            auto phiout = *phid0;
-            phifile << phiout;
+    //
+    void get_inter_patch_connectivity(
+        const Graph &vertex_connectivity,
+        const std::vector<std::vector<std::size_t>> &components,
+        std::vector<std::vector<std::size_t>> &inter_patch_connectivity) const {
+        inter_patch_connectivity.clear();
+        inter_patch_connectivity.resize(components.size());
+        // find the component with the largest number of vertices as the
+        // starting point
+        auto max_component =
+            std::max_element(components.begin(), components.end(),
+                             [](const std::vector<std::size_t> &a,
+                                const std::vector<std::size_t> &b) {
+                                 return a.size() < b.size();
+                             });
+        // find a representative vertex in each component
+        std::vector<std::size_t> representative_vertex(components.size());
+        for (std::size_t i = 0; i < components.size(); ++i) {
+            representative_vertex[i] = components[i][0];
         }
-        */
-
-        // std::vector<Point3D>             phi_vertex;
-        // std::vector<std::vector<int>>  phi_connect;
-        auto &phi_vertex = isosurface.vertex;
-        auto &phi_connect = isosurface.connectivity;
-
-        std::vector<double> vx_res;
-        std::vector<double> vy_res;
-        std::vector<double> vz_res;
-
-        std::vector<int> c1_res;
-        std::vector<int> c2_res;
-        std::vector<int> c3_res;
-
-        std::vector<double> vertex_nor_x;
-        std::vector<double> vertex_nor_y;
-        std::vector<double> vertex_nor_z;
-
-        std::vector<double> vertex_nor_num;
-        std::vector<double> vertex_nor_area;
-
-        std::vector<int> phi_sign;
-
-        bool ismaster = details::MPI_rank(MPI_COMM_WORLD) == 0;
-
-        // Triangulation of the phi=0
-        // add_triangle(mesh, phid0, phi_vertex, phi_connect);
-
-        // if(ismaster) info("Start to combine triangle.");
-        //  Combine triangle from different processor and remove duplicate
-        combine_triangle(phi_vertex, phi_connect, vx_res, vy_res, vz_res,
-                         c1_res, c2_res, c3_res);
-
-        // if(ismaster) info("Start to compute normal.");
-        //  Compute normal vector at vertex
-        // compute_normal(vx_res, vy_res, vz_res, c1_res, c2_res, c3_res,
-        //                vertex_nor_x, vertex_nor_y, vertex_nor_z,
-        //                vertex_nor_num, vertex_nor_area);
-        std::vector<Point3D> vertices;
-        std::vector<Point3D> normal_vectors;
-        compute_normal_vector(isosurface, vertices, normal_vectors);
-        // Laplace smoothing
-        // laplace_smooth(vx_res, vy_res, vz_res, c1_res, c2_res, c3_res);
-
-        // debug use
-        // write_triangulation(vx_res, vy_res, vz_res,\
-        //             vertex_nor_x, vertex_nor_y, vertex_nor_z,\
-        //             c1_res, c2_res, c3_res );
-
-        // filter_point(vx_res, vy_res, vz_res, vertex_nor_x, vertex_nor_y,
-        //              vertex_nor_z, vertex_nor_num, vertex_nor_area);
-
-        // The volume mesh is divided by the phi=0 surface. Traverse the
-        // vertices of the mesh and color the vertices on the two sides of the
-        // surface.
-
-        // if(ismaster) info("Start to compute levelset distance.");
-        //  Levelset redistancing calculation
-        compute_levelset_distance(mesh, phid0, phi_sign, d2v_map, vx_res,
-                                  vy_res, vz_res, vertex_nor_x, vertex_nor_y,
-                                  vertex_nor_z);
-
-        // debug use
-        /*
-        {
-            File phifile("comp/phi_redis.pvd");
-            auto phiout = *phid0;
-            phifile << phiout;
+        // Use greedy to identity the connectivity between components
+        for (int i = 0; i < representative_vertex.size(); ++i) {
+            for (int j = i + 1; j < representative_vertex.size(); ++j) {
+                std::vector<std::size_t> path;
+                details::get_path(vertex_connectivity, representative_vertex[i],
+                                  representative_vertex[j], path);
+                if (path.size() > 0) {
+                    inter_patch_connectivity[i].push_back(j);
+                    inter_patch_connectivity[j].push_back(i);
+                }
+            }
         }
-        */
     }
 };
 } // namespace GeoRd

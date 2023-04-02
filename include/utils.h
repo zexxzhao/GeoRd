@@ -119,6 +119,9 @@ template <typename Key, typename Value>
 using UnorderedMap =
     std::unordered_map<Key, Value, HashTable<Key>, KeyEqual<Key>>;
 
+template <typename Key, typename Value>
+using UnorderedSet = std::unordered_set<Key, HashTable<Key>, KeyEqual<Key>>;
+
 template <typename T> using Point3DMap = UnorderedMap<Point3D, T>;
 
 } // namespace GeoRd::details

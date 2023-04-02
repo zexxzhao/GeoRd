@@ -1,6 +1,5 @@
 #ifndef __POINT_H__
 #define __POINT_H__
-#include "GeometricEntity.h"
 #include <array>
 #include <cmath>
 
