@@ -12,9 +12,9 @@ const int is_empty = static_cast<int>(-1);
 
 template <int D> constexpr int n_child = 1 << D;
 
-template <int D = 3> using Dim = std::integral_constant<int, D>;
+using Dim = std::integral_constant<int, 3>;
 
-template <int D = typename Dim::value> struct Node {
+template <int D = Dim::value> struct Node {
     Node(int n = is_empty) { std::fill(vertex.begin(), vertex.end(), n); }
 
     void set_vertex(int i, int val) { this->vertex[i] = val; }
@@ -31,7 +31,7 @@ template <int D = typename Dim::value> struct Node {
     std::array<int, n_child<D>> vertex;
 };
 
-tempalte<int D = typename Dim::value> struct TreeNode {
+template<int D = Dim::value> struct TreeNode {
     std::vector<int> plist;
     std::vector<TreeNode> child;
     std::array<int, n_child<D>> child_exist;
@@ -76,9 +76,12 @@ struct Box3D {
     Box3D(double xa, double ya, double za, double xb, double yb, double zb)
         : Box3D(Point3D{xa, ya, za}, Point3D{xb, yb, zb}) {}
 
-    Box3D &operator=(Box3D box) { std::swap(this->box_pos, box.box_pos); }
+    Box3D &operator=(Box3D box) {
+        std::swap(this->box_pos, box.box_pos);
+        return *this;
+    }
 
-    [[deprecated]] void set_point(Point pa, Point3D pb) {
+    [[deprecated]] void set_point(Point3D pa, Point3D pb) {
         this->box_pos[0] = pa;
         this->box_pos[1] = pb;
     }
@@ -96,6 +99,8 @@ struct Box3D {
         std::cout << std::endl;
     }
 };
+
+namespace details {
 
 // build_bounding_box: build the bounding box of the point cloud
 // begin: begin iterator of the point cloud
@@ -141,197 +146,6 @@ Box3D build_bounding_box(PointIT begin, PointIT end, double box_tol = 1e-6) {
     return Box3D{p0, p1};
 }
 
-template <typename = void, int = 0> struct Octree {};
-
-// for point
-template <int _Tag> struct Octree<Point3D, _Tag> {
-    TreeNode root;
-    std::vector<Point3D> pdat;
-    Box3D box_coord;
-    int recur_lim = 6;
-
-    Octree() = default;
-
-    void set_box(std::vector<Point> pvec) {
-        build_bounding_box(pvec.begin(), pvec.end(), 1e-5);
-    }
-
-    void insert_point(const std::vector<Point> &plist) {
-        Box3D box_cur = this->box_coord;
-        for (int i = 0; i < plist.size(); i++) {
-            insert_point_help(plist[i], i, 0, box_cur, this->root);
-        }
-    }
-
-    void insert_point_help(Point3D pcur, int point_id, int level, Box3D box_cur,
-                           TreeNode &cur) {
-        int is_in_box;
-        Box3D box_sub;
-
-        if (level == this->recur_lim) {
-            cur.plist.push_back(point_id);
-            return;
-        }
-
-        is_in_box = point_in_box(pcur, box_cur);
-
-        if (is_in_box == 1) {
-
-            if (cur.child.size() == 0) {
-                for (int i = 0; i < 8; i++) {
-                    cur.child.push_back(TreeNode());
-                }
-            }
-
-            if (cur.child.size() != 8) {
-                std::cout << "Child size wrong" << std::endl;
-            }
-
-            for (int i = 0; i < 8; i++) {
-                box_sub = cal_sub_box(box_cur, i);
-                is_in_box = point_in_box(pcur, box_sub);
-
-                if (is_in_box == 1) {
-                    cur.child_exist[i] = 1;
-                    insert_point_help(pcur, point_id, level + 1, box_sub,
-                                      cur.child[i]);
-                    break;
-                }
-            }
-        }
-    }
-    void search_point(Point3D pcur, int &index, double &rval) {
-        index = 0;
-        rval = (pcur - this->pdat[0]).norm();
-        search_point_help(pcur, 0, this->root, this->box_cor, index, rval);
-    }
-
-    void search_point_help(Point3D pcur, int level, TreeNode &cur,
-                           Box3D box_cur, int &index, double &rval) {
-        Box3D box_sub;
-
-        if (level == this->recur_lim) {
-            for (int i = 0; i < cur.plist.size(); i++) {
-                double dist_val = (this->pdat[cur.plist[i]] - pcur).norm();
-                if (dist_val < rval) {
-                    rval = dist_val;
-                    index = cur.plist[i];
-                }
-            }
-        }
-        else {
-            for (int i = 0; i < 8; i++) {
-                if (cur.child_exist[i] == -1)
-                    continue;
-
-                box_sub = cal_sub_box(box_cur, i);
-                double dist_tmp = compute_min_dist(box_sub, pcur);
-
-                if (dist_tmp > rval)
-                    continue;
-                search_point_help(pcur, level + 1, cur.child[i], box_sub, index,
-                                  rval);
-            }
-        }
-    }
-
-    [[deprecated]] void print_octree_box() const {
-        std::cout << "Octree box Point 0: " << this->box_cor.box_pos[0].x()
-                  << " , " << this->box_cor.box_pos[0].y() << " , "
-                  << this->box_cor.box_pos[0].z() << std::endl;
-        std::cout << "Octree box Point 1: " << this->box_cor.box_pos[1].x()
-                  << " , " << this->box_cor.box_pos[1].y() << " , "
-                  << this->box_cor.box_pos[1].z() << std::endl;
-    }
-};
-
-#include <unordered_map>
-
-// for triangles
-template <int _Tag> class Octree<Triangle3D, _Tag> {
-    Box3D box_cor;
-    const int recur_lim = 6;
-    std::vector<Box3D> node_box;
-    std::vector<Node> node_dat;
-    std::vector<Box3D> entity_box;
-    std::vector<std::vector<int>> entity_bucket;
-    std::unordered_map<std::string, int> path_hash;
-
-    Octree() : node_dat(1) {}
-
-    void set_box(Point3D pa, Point3D pb) {
-        this->box_cor.box_pos[0] = pa;
-        this->box_cor.box_pos[1] = pb;
-    }
-
-    void insert_triangle(Triangle3D tri, int tri_id) {
-        int level = 0;
-        std::string path = "";
-        auto tri_box = get_tri_bounding_box(tri);
-        recur_insert(tri_id, tri_box, 0, this->box_cor, level, path);
-    }
-    void recur_insert(int tri_id, Box3D tri_box, int node_num, Box3D oct_box,
-                      int level, std::string path) {
-
-        Box3D box_sub[8];
-        bool travel[8];
-
-        // oct_box.print_box();
-
-        if (level >= recur_lim) {
-            auto hash_sear = path_hash.find(path);
-
-            if (hash_sear == (path_hash.end())) {
-                path_hash[path] = entity_bucket.size();
-
-                std::vector<int> tmp;
-                tmp.push_back(tri_id);
-                entity_bucket.push_back(tmp);
-
-                entity_box.push_back(oct_box);
-            }
-            else {
-                entity_bucket[hash_sear->second].push_back(tri_id);
-            }
-
-            return;
-        }
-
-        for (int isub = 0; isub < 8; isub++) {
-
-            box_sub[isub] = cal_sub_box(oct_box, isub);
-            travel[isub] = box_box_intersect(tri_box, box_sub[isub]);
-
-            if (node_dat[node_num].vertex[isub] == -1 and
-                travel[isub] == true) {
-                Node node_insert;
-                node_dat.push_back(node_insert);
-                node_box.push_back(box_sub[isub]);
-
-                int node_insert_id = (node_dat.size()) - 1;
-                node_dat[node_num].vertex[isub] = node_insert_id;
-            }
-        }
-
-        for (int isub = 0; isub < 8; isub++) {
-            if (travel[isub] == true) {
-                std::string path_next = path + std::to_string(isub);
-                recur_insert(tri_id, tri_box, node_dat[node_num].vertex[isub],
-                             box_sub[isub], level + 1, path_next);
-            }
-        }
-    }
-
-    void print_octree_box() {
-        std::cout << "Octree box Point 0: " << this->box_cor.box_pos[0].x()
-                  << " , " << this->box_cor.box_pos[0].y() << " , "
-                  << this->box_cor.box_pos[0].z() << std::endl;
-        std::cout << "Octree box Point 1: " << this->box_cor.box_pos[1].x()
-                  << " , " << this->box_cor.box_pos[1].y() << " , "
-                  << this->box_cor.box_pos[1].z() << std::endl;
-    }
-};
-
 inline Box3D get_tri_bounding_box(Triangle3D tri) {
     return build_bounding_box(tri.vertex.begin(), tri.vertex.end(), 1e-5);
 }
@@ -376,7 +190,7 @@ inline Box3D cal_sub_box(const Box3D &box, int nk) {
     return box_res;
 }
 
-inline bool point_in_box(cosnt Point3D &pcur, const Box3D &box) {
+inline bool point_in_box(const Point3D &pcur, const Box3D &box) {
     for (int i = 0; i < 3; i++) {
         if (pcur[i] < box.box_pos[0][i] or pcur[i] > box.box_pos[1][i]) {
             return false;
@@ -414,6 +228,201 @@ inline double compute_min_dist(Box3D box, Point3D x) {
 
     return r2;
 }
+
+} // namespace details
+
+
+template <typename = void, int = 0> struct Octree {};
+
+// for point
+template <int _Tag> struct Octree<Point3D, _Tag> {
+    TreeNode<3> root{};
+    std::vector<Point3D> pdat;
+    Box3D box_coord;
+    int recur_lim = 6;
+
+    Octree() = default;
+
+    void set_box(std::vector<Point3D> pvec) {
+        details::build_bounding_box(pvec.begin(), pvec.end(), 1e-5);
+    }
+
+    void insert_point(const std::vector<Point3D> &plist) {
+        Box3D box_cur = this->box_coord;
+        for (int i = 0; i < plist.size(); i++) {
+            insert_point_help(plist[i], i, 0, box_cur, this->root);
+        }
+    }
+
+    void insert_point_help(Point3D pcur, int point_id, int level, Box3D box_cur,
+                           TreeNode<3> &cur) {
+        int is_in_box;
+        Box3D box_sub;
+
+        if (level == this->recur_lim) {
+            cur.plist.push_back(point_id);
+            return;
+        }
+
+        is_in_box = details::point_in_box(pcur, box_cur);
+
+        if (is_in_box == 1) {
+
+            if (cur.child.size() == 0) {
+                for (int i = 0; i < 8; i++) {
+                    cur.child.push_back(TreeNode());
+                }
+            }
+
+            if (cur.child.size() != 8) {
+                std::cout << "Child size wrong" << std::endl;
+            }
+
+            for (int i = 0; i < 8; i++) {
+                box_sub = details::cal_sub_box(box_cur, i);
+                is_in_box = details::point_in_box(pcur, box_sub);
+
+                if (is_in_box == 1) {
+                    cur.child_exist[i] = 1;
+                    insert_point_help(pcur, point_id, level + 1, box_sub,
+                                      cur.child[i]);
+                    break;
+                }
+            }
+        }
+    }
+    void search_point(Point3D pcur, int &index, double &rval) {
+        index = 0;
+        rval = (pcur - this->pdat[0]).norm();
+        search_point_help(pcur, 0, this->root, this->box_cor, index, rval);
+    }
+
+    void search_point_help(Point3D pcur, int level, TreeNode<3> &cur,
+                           Box3D box_cur, int &index, double &rval) {
+        Box3D box_sub;
+
+        if (level == this->recur_lim) {
+            for (int i = 0; i < cur.plist.size(); i++) {
+                double dist_val = (this->pdat[cur.plist[i]] - pcur).norm();
+                if (dist_val < rval) {
+                    rval = dist_val;
+                    index = cur.plist[i];
+                }
+            }
+        }
+        else {
+            for (int i = 0; i < 8; i++) {
+                if (cur.child_exist[i] == -1)
+                    continue;
+
+                box_sub = details::cal_sub_box(box_cur, i);
+                double dist_tmp = details::compute_min_dist(box_sub, pcur);
+
+                if (dist_tmp > rval)
+                    continue;
+                search_point_help(pcur, level + 1, cur.child[i], box_sub, index,
+                                  rval);
+            }
+        }
+    }
+
+    [[deprecated]] void print_octree_box() const {
+        std::cout << "Octree box Point 0: " << this->box_cor.box_pos[0].x()
+                  << " , " << this->box_cor.box_pos[0].y() << " , "
+                  << this->box_cor.box_pos[0].z() << std::endl;
+        std::cout << "Octree box Point 1: " << this->box_cor.box_pos[1].x()
+                  << " , " << this->box_cor.box_pos[1].y() << " , "
+                  << this->box_cor.box_pos[1].z() << std::endl;
+    }
+};
+
+#include <unordered_map>
+
+// for triangles
+template <int _Tag> class Octree<Triangle3D, _Tag> {
+    Box3D box_cor;
+    const int recur_lim = 6;
+    std::vector<Box3D> node_box;
+    std::vector<Node<3>> node_dat;
+    std::vector<Box3D> entity_box;
+    std::vector<std::vector<int>> entity_bucket;
+    std::unordered_map<std::string, int> path_hash;
+
+    Octree() : node_dat(1) {}
+
+    void set_box(Point3D pa, Point3D pb) {
+        this->box_cor.box_pos[0] = pa;
+        this->box_cor.box_pos[1] = pb;
+    }
+
+    void insert_triangle(Triangle3D tri, int tri_id) {
+        int level = 0;
+        std::string path = "";
+        auto tri_box = details::get_tri_bounding_box(tri);
+        recur_insert(tri_id, tri_box, 0, this->box_cor, level, path);
+    }
+    void recur_insert(int tri_id, Box3D tri_box, int node_num, Box3D oct_box,
+                      int level, std::string path) {
+
+        Box3D box_sub[8];
+        bool travel[8];
+
+        // oct_box.print_box();
+
+        if (level >= recur_lim) {
+            auto hash_sear = path_hash.find(path);
+
+            if (hash_sear == (path_hash.end())) {
+                path_hash[path] = entity_bucket.size();
+
+                std::vector<int> tmp;
+                tmp.push_back(tri_id);
+                entity_bucket.push_back(tmp);
+
+                entity_box.push_back(oct_box);
+            }
+            else {
+                entity_bucket[hash_sear->second].push_back(tri_id);
+            }
+
+            return;
+        }
+
+        for (int isub = 0; isub < 8; isub++) {
+
+            box_sub[isub] = details::cal_sub_box(oct_box, isub);
+            travel[isub] = details::box_box_intersect(tri_box, box_sub[isub]);
+
+            if (node_dat[node_num].vertex[isub] == -1 and
+                travel[isub] == true) {
+                Node node_insert;
+                node_dat.push_back(node_insert);
+                node_box.push_back(box_sub[isub]);
+
+                int node_insert_id = (node_dat.size()) - 1;
+                node_dat[node_num].vertex[isub] = node_insert_id;
+            }
+        }
+
+        for (int isub = 0; isub < 8; isub++) {
+            if (travel[isub] == true) {
+                std::string path_next = path + std::to_string(isub);
+                recur_insert(tri_id, tri_box, node_dat[node_num].vertex[isub],
+                             box_sub[isub], level + 1, path_next);
+            }
+        }
+    }
+
+    void print_octree_box() {
+        std::cout << "Octree box Point 0: " << this->box_cor.box_pos[0].x()
+                  << " , " << this->box_cor.box_pos[0].y() << " , "
+                  << this->box_cor.box_pos[0].z() << std::endl;
+        std::cout << "Octree box Point 1: " << this->box_cor.box_pos[1].x()
+                  << " , " << this->box_cor.box_pos[1].y() << " , "
+                  << this->box_cor.box_pos[1].z() << std::endl;
+    }
+};
+
 
 } // namespace GeoRd
 #endif // __OCTREE_H__

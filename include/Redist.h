@@ -3,7 +3,10 @@
 #include "Mesh.h"
 #include "Octree.h"
 #include <set>
-#include <unorder_map>
+#include <fstream>
+#include <iostream>
+#include <ios>
+#include <unordered_map>
 namespace GeoRd {
 
 using TetrahedronMesh = Mesh<Element::Tetrahedron, 3, Layout::Distributed>;
@@ -75,6 +78,7 @@ void write_triangulation(
  * @param[out] tri_con_tmp connectivity list of the triangle
  * @param[in] phival scalar function value of the tetrahedral mesh
  */
+template<typename VolumeMesh>
 void compute_triangle_winding_in_tetrahedron(
     const std::vector<Point3D> &phi_vertex,
     const std::vector<Point3D> &phi_tet_vertex, std::vector<int> &tri_con_tmp,
@@ -83,8 +87,8 @@ void compute_triangle_winding_in_tetrahedron(
 
     // Get triangle vertex coordinate
     auto v1_tmp = phi_vertex[tri_con_tmp[0]];
-    v2_tmp = phi_vertex[tri_con_tmp[1]];
-    v3_tmp = phi_vertex[tri_con_tmp[2]];
+    auto v2_tmp = phi_vertex[tri_con_tmp[1]];
+    auto v3_tmp = phi_vertex[tri_con_tmp[2]];
 
     // Calculate the normal vector for triangle
     const double unit_scale = 1e6;
@@ -253,7 +257,7 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
             }
 
             // Fix winding problem
-            compute_triangle_winding_in_tetrahedron(phi_vertex, phi_tet_vertex,
+            compute_triangle_winding_in_tetrahedron<VolumeMesh>(phi_vertex, phi_tet_vertex,
                                                     tri_con_tmp, phival);
 
             // add triangle
@@ -321,7 +325,7 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
                 }
 
                 // Fix winding problem
-                compute_triangle_winding_in_tetrahedron(
+                compute_triangle_winding_in_tetrahedron<VolumeMesh>(
                     phi_vertex, phi_tet_vertex, tri_con_tmp, phival);
 
                 // add triangle

@@ -1,12 +1,70 @@
 #ifndef __MPI_H__
 #define __MPI_H__
+#include <iostream>
 #include <numeric>
 #include <vector>
 
 #include <mpi.h>
+#include "utils.h"
+#define varname(name, line) name##line
+#ifndef warning
+#define warning(...)                                                           \
+    do {                                                                       \
+        int varname(rank, __LINE__) = details::MPI_rank(MPI_COMM_WORLD);                \
+        int varname(size, __LINE__) = details::MPI_size(MPI_COMM_WORLD);                \
+        fprintf(stderr,                                                        \
+                "********************************************************"     \
+                "***************\n");                                          \
+        fprintf(stderr, "* RANK(%d/%d)\n", varname(rank, __LINE__),            \
+                varname(size, __LINE__));                                      \
+        fprintf(stderr, "* File(%s), Function(%s), Line(%d):\n", __FILE__,     \
+                __FUNCTION__, __LINE__);                                       \
+        fprintf(stderr, "* ");                                                 \
+        fprintf(stderr, __VA_ARGS__);                                          \
+        fprintf(stderr,                                                        \
+                "********************************************************"     \
+                "***************\n");                                          \
+    } while (0)
+#endif
+
+#ifndef error
+#define error(...)                                                             \
+    do {                                                                       \
+        int varname(rank, __LINE__) = details::MPI_rank(MPI_COMM_WORLD);                \
+        int varname(size, __LINE__) = details::MPI_size(MPI_COMM_WORLD);                \
+        fprintf(stderr,                                                        \
+                "********************************************************"     \
+                "***************\n");                                          \
+        fprintf(stderr, "* RANK(%d/%d)\n", varname(rank, __LINE__),            \
+                varname(size, __LINE__));                                      \
+        fprintf(stderr, "* File(%s), Function(%s), Line(%d):\n", __FILE__,     \
+                __FUNCTION__, __LINE__);                                       \
+        fprintf(stderr, "* ");                                                 \
+        fprintf(stderr, __VA_ARGS__);                                          \
+        fprintf(stderr,                                                        \
+                "********************************************************"     \
+                "***************\n");                                          \
+        MPI_Abort(MPI_COMM_WORLD, -1);                                         \
+    } while (0)
+#endif
+
 
 namespace GeoRd {
 namespace details {
+
+struct MPI_Base {
+    MPI_Base(int argc, char **argv) {
+        MPI_Init(&argc, &argv);
+    }
+
+    ~MPI_Base() {
+        MPI_Finalize();
+    }
+};
+
+inline void init(int argc, char **argv) {
+    static MPI_Base mpi_base(argc, argv);
+}
 
 inline int MPI_rank(MPI_Comm comm = MPI_COMM_WORLD) {
     int rank;
@@ -22,7 +80,7 @@ inline int MPI_size(MPI_Comm comm = MPI_COMM_WORLD) {
 
 template <typename T> constexpr MPI_Datatype MPI_type() {
     if constexpr (std::is_same<T, float>::value) {
-        reutrn MPI_FLOAT;
+        return MPI_FLOAT;
     }
     else if constexpr (std::is_same<T, double>::value) {
         return MPI_DOUBLE;
@@ -67,10 +125,11 @@ void MPI_gather(MPI_Comm comm, const std::vector<T> &in, std::vector<T> &out,
                 offsets.data(), MPI_type<T>(), recv_proc, comm);
 }
 
-#include "Point3D.h"
-inline void MPI_gather(MPI_Comm comm, const std::vector<Point3D> &in,
-                       std::vector<Point3D> &out) {
-    using DataType = typename Point3D::AtomizedType;
+// For Point3D
+template <typename T>
+auto MPI_gather(MPI_Comm comm, const std::vector<T> &in,
+                std::vector<T> &out) -> typename std::enable_if<details::Subscriptable<T>::value>::type {
+    using DataType = typename T::AtomizedType;
     std::vector<DataType> in_data, out_data;
     in_data.reserve(in.size() * 3);
     for (const auto &p : in) {
@@ -87,7 +146,7 @@ inline void MPI_gather(MPI_Comm comm, const std::vector<Point3D> &in,
 }
 
 template <typename T>
-void MPI_allgatherv(MPI_Comm comm, const std::vector<T> &in,
+void MPI_allgather(MPI_Comm comm, const std::vector<T> &in,
                     std::vector<T> &out) {
     const auto size = MPI_size(comm);
     std::vector<int> pcounts(size);
@@ -105,7 +164,7 @@ void MPI_allgatherv(MPI_Comm comm, const std::vector<T> &in,
 }
 
 template <typename T>
-void MPI_allgatherv(MPI_Comm comm, const std::vector<T> &in,
+void MPI_allgather(MPI_Comm comm, const std::vector<T> &in,
                     std::vector<std::vector<T>> &out) {
     const auto size = MPI_size(comm);
     std::vector<int> pcounts(size);
@@ -138,7 +197,7 @@ void MPI_broadcast(MPI_Comm comm, std::vector<T> &value, int send_proc = 0) {
 }
 
 template <typename T>
-void MPI_scatter(MPI_COMM comm, const std::vector<std::vector<T>> send_data,
+void MPI_scatter(MPI_Comm comm, const std::vector<std::vector<T>> send_data,
                  std::vector<T> recv_data, int send_proc = 0) {
     const auto size = MPI_size(comm);
     std::vector<int> pcounts(size);
@@ -285,11 +344,9 @@ void MPI_alltoall(MPI_Comm comm, const std::vector<std::vector<T>> &in,
 
 template <
     typename Key, typename Value, typename Hash = std::hash<Key>,
-    typename KeyEqual = std::equal_to<Key>,
-    std::enable_if<std::is_arithmetic<Key>::value and std::is_arithmetic<Value>,
-                   int>::type = 0>
+    typename KeyEqual = std::equal_to<Key>>
 struct MPI_DataDistributor {
-
+    static_assert(std::is_arithmetic<Key>::value and std::is_arithmetic<Value>::value, "Key and Value must be arithmetic types.");
     template <typename T = Value>
     using Map = std::unordered_map<Key, T, Hash, KeyEqual>;
 
@@ -367,4 +424,5 @@ struct MPI_DataDistributor {
 
 } // namespace details
 } // namespace GeoRd
+
 #endif // __MPI_H__

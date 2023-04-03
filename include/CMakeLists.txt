@@ -1,0 +1,12 @@
+
+# add all headers to the list
+
+set(HEADER_LISTS
+    ${CMAKE_CURRENT_SOURCE_DIR}/MPI.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Graph.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Mesh.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Octree.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Point.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/redis.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/utils.h
+    PARENT_SCOPE)

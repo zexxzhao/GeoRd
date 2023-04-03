@@ -2,6 +2,10 @@
 #define __POINT_H__
 #include <array>
 #include <cmath>
+#include "MPI.h"
+
+
+namespace GeoRd {
 
 namespace details {
 struct AddTag {};
@@ -66,9 +70,6 @@ inline std::array<T, N> &operator/=(std::array<T, N> &a, double b) {
     return a;
 }
 } // namespace details
-
-namespace GeoRd {
-
 template <int D = 3, std::enable_if_t<1 <= D and D <= 3, int> = 0> class Point {
 public:
     using AtomizedType = double;

@@ -1,7 +1,8 @@
 #ifndef __UTILS_H__
 #define __UTILS_H__
 
-#include "Point.h"
+#include <unordered_set>
+#include <unordered_map>
 #include <string>
 
 namespace GeoRd::details {
@@ -45,6 +46,15 @@ inline void hash_con(int x, int y, int z, std::string &res_str) {
     res_str = x_str + "," + y_str + "," + z_str;
 };
 
+std::false_type is_subscriptable_impl(...);
+template<typename T>
+auto is_subscriptable_impl(int) -> decltype(std::declval<T>()[0], std::true_type());
+
+template <typename T> struct Subscriptable {
+    static constexpr bool value = decltype(is_subscriptable_impl<T>(0))::value;
+};
+
+
 template <typename T> using Triplet = std::array<T, 3>;
 
 template <typename T, typename = void> struct HashTable {
@@ -71,9 +81,10 @@ struct HashTable<Triplet<T>,
     }
 };
 
-template <> struct HashTable<Point3D> {
-    std::size_t operator()(const Point3D &p) const {
-        return HashTable<Triplet<double>>()(Triplet<double>{p[0], p[1], p[2]});
+template <typename T> struct HashTable<T, typename std::enable_if<Subscriptable<T>::value, void>::type> {
+    std::size_t operator()(const T &p) const {
+        using U = decltype(p[0]);
+        return HashTable<Triplet<U>>()(Triplet<U>{p[0], p[1], p[2]});
     }
 };
 
@@ -107,11 +118,12 @@ struct KeyEqual<Triplet<T>,
 };
 
 // Partial specialization for KeyEqual<Point3D> using SFINAE
-template <> struct KeyEqual<Point3D> {
-    bool operator()(const Point3D &p1, const Point3D &p2) const {
-        return KeyEqual<Triplet<double>>()(
-            Triplet<double>{p1[0], p1[1], p1[2]},
-            Triplet<double>{p2[0], p2[1], p2[2]});
+template <typename T> struct KeyEqual<T, typename std::enable_if<Subscriptable<T>::value, void>::type> {
+    bool operator()(const T &p1, const T &p2) const {
+        using U = decltype(p1[0]);
+        return KeyEqual<Triplet<U>>()(
+            Triplet<U>{p1[0], p1[1], p1[2]},
+            Triplet<U>{p2[0], p2[1], p2[2]});
     }
 };
 
@@ -122,8 +134,7 @@ using UnorderedMap =
 template <typename Key, typename Value>
 using UnorderedSet = std::unordered_set<Key, HashTable<Key>, KeyEqual<Key>>;
 
-template <typename T> using Point3DMap = UnorderedMap<Point3D, T>;
-
 } // namespace GeoRd::details
+
 
 #endif // __UTILS_H__

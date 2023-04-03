@@ -33,11 +33,11 @@ struct Exclusive {};   // default
 struct Distributed {}; // MPI-based distributed mesh
 } // namespace Layout
 
-template <typename Elem, int D = Element::dim,
+template <typename Elem, int D = Elem::dim,
           typename Ownership = Layout::Exclusive>
 struct Mesh {
     using Element = Elem;
-    using Node = Point<double, D>;
+    using Node = Point<D>;
 
     std::vector<Node> vertices;
     std::vector<std::size_t> elements;
@@ -52,16 +52,54 @@ struct Mesh {
 };
 
 template <typename Elem>
-struct Mesh<Elem, Layout::Distributed> : public struct Mesh<Elem> {
+struct Mesh<Elem, Elem::dim, Layout::Distributed> : public Mesh<Elem> {
     using Element = Elem;
-    using Node = Point<double, Elememt::dim>;
+    using Node = Point<Element::dim>;
 
     std::vector<std::size_t> vertex_local2global;
     std::vector<std::size_t> element_local2global;
 };
 
-template <typename Elem, typename Layout>
-void get_vertex_connectivity(const Mesh<Element, Layout> &mesh, Graph &graph) {
+
+template <typename Elem>
+void get_vertex_connectivity_in_local_patch(
+    const Mesh<Elem, Elem::dim, Layout::Distributed> &mesh, Graph &graph) {
+    graph.clear();
+    Graph local_graph;
+    get_vertex_connectivity(mesh, local_graph);
+    for (auto &kv : local_graph) {
+        auto &neighbors = graph[mesh.vertex_local2global[kv.first]];
+        neighbors.assign(kv.second.begin(), kv.second.end());
+        std::for_each(
+            neighbors.begin(), neighbors.end(),
+            [&mesh](std::size_t &v) { v = mesh.vertex_local2global[v]; });
+    }
+}
+
+#include "MPI.h"
+template <typename Elem>
+void get_vertex_connectivity_in_global_patch(
+    const Mesh<Elem, Elem::dim, Layout::Distributed> &mesh, Graph &graph) {
+    get_vertex_connectivity_in_local_patch(mesh, graph);
+
+    // serialize graph
+    std::vector<size_t> data;
+    serialize_graph(graph, data);
+    // gather data
+    std::vector<size_t> recv_data;
+    details::MPI_allgather(MPI_COMM_WORLD, data, recv_data);
+    // deserialize graph
+    deserialize_graph(recv_data, graph);
+    // sort and remove duplicates
+    for (auto &kv : graph) {
+        std::sort(kv.second.begin(), kv.second.end());
+        kv.second.erase(std::unique(kv.second.begin(), kv.second.end()),
+                        kv.second.end());
+    }
+}
+
+template <typename Elem>
+void get_vertex_connectivity(const Mesh<Elem, Elem::dim, Layout::Exclusive> &mesh, Graph &graph) {
     graph.clear();
     for (std::size_t i = 0; i < mesh.elements.size(); ++i) {
         for (std::size_t j = 0; j < Elem::n_vertices; ++j) {
@@ -83,40 +121,8 @@ void get_vertex_connectivity(const Mesh<Element, Layout> &mesh, Graph &graph) {
 }
 
 template <typename Elem>
-void get_vertex_connectivity_in_local_patch(
-    const Mesh<Elem, Layout::Distributed> &mesh, Graph &graph) {
-    graph.clear();
-    Graph local_graph;
-    get_vertex_connectivity(mesh, local_graph);
-    for (auto &kv : local_graph) {
-        auto &neighbors = graph[mesh.vertex_local2global[kv.first]];
-        neighbors.assign(kv.second.begin(), kv.second.end());
-        std::for_each(
-            neighbors.begin(), neighbors.end(),
-            [&mesh](std::size_t &v) { v = mesh.vertex_local2global[v]; });
-    }
-}
-
-#include "MPI.h"
-template <typename Elem>
-void get_vertex_connectivity_in_global_patch(
-    const Mesh<Elem, Layout::Distributed> &mesh, Graph &graph) {
-    get_vertex_connectivity_in_local_patch(mesh, graph);
-
-    // serialize graph
-    std::vector<size_t> data;
-    serialize_graph(graph, data);
-    // gather data
-    std::vector<size_t> recv_data;
-    details::MPI_Allgather(MPI_COMM_WORLD, data, recv_data);
-    // deserialize graph
-    deserialize_graph(recv_data, graph);
-    // sort and remove duplicates
-    for (auto &kv : graph) {
-        std::sort(kv.second.begin(), kv.second.end());
-        kv.second.erase(std::unique(kv.second.begin(), kv.second.end()),
-                        kv.second.end());
-    }
+void vertex_connectivity(const Mesh<Elem, Elem::dim, Layout::Distributed> &mesh, Graph &graph) {
+    get_vertex_connectivity_in_global_patch(mesh, graph);
 }
 
 } // namespace GeoRd
