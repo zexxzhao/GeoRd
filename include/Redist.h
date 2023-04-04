@@ -1,5 +1,6 @@
 #ifndef __REDIS_H__
 #define __REDIS_H__
+#include "utils.h"
 #include "Mesh.h"
 #include "Octree.h"
 #include <set>
@@ -82,8 +83,7 @@ template<typename VolumeMesh>
 void compute_triangle_winding_in_tetrahedron(
     const std::vector<Point3D> &phi_vertex,
     const std::vector<Point3D> &phi_tet_vertex, std::vector<int> &tri_con_tmp,
-    const std::array<double, typename VolumeMesh::Element::n_vertices>
-        &phival) {
+    const typename VolumeMesh::Element::template VertexArray<double> &phival) {
 
     // Get triangle vertex coordinate
     auto v1_tmp = phi_vertex[tri_con_tmp[0]];
@@ -119,7 +119,7 @@ void compute_triangle_winding_in_tetrahedron(
 // |/\|
 // ----
 // Need to choose \ or / direction
-int compute_diagonal_direction(std::vector<Point> &phi_tmp_vertex) {
+int compute_diagonal_direction(std::vector<Point3D> &phi_tmp_vertex) {
     int diag_dir = 1;
 
     Point3D v1 = phi_tmp_vertex[1] - phi_tmp_vertex[0];
@@ -168,7 +168,7 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
 
     int ver_loc_index_cur = 0;
     // std::unordered_map<std::string, int> vertex_to_local_index;
-    details::Point3DMap<std::size_t> vertex_to_local_index;
+    details::UnorderedMap<Point3D, std::size_t> vertex_to_local_index;
 
     // for (CellIterator cell(*mesh); !cell.end(); ++cell)
     for (int icell = 0; icell < mesh.elements.size() / 4; ++icell) {
@@ -178,17 +178,15 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
         // std::vector<int>().swap(phi_pos);
         // std::vector<int>().swap(phi_neg);
         std::vector<Point3D> phi_tmp_vertex;
-        std::array<Point3D, typename VolumeMesh::Element::n_vertices>
-            phi_tet_vertex;
+        typename VolumeMesh::Element::template VertexArray<double> phi_tet_vertex;
         std::vector<int> phi_pos, phi_neg;
 
         // Get the coordinate of four vertex
         // mesh.get_cell_coordinates(icell, coordinate_dofs);
         mesh.get_cell_vertices(icell, phi_tet_vertex);
         // Get the phi value of four vertex
-        std::array<double, typename VolumeMesh::Element::n_vertices> phival;
-        for (int ivtx = 0; ivtx < typename VolumeMesh::Element::n_vertices;
-             ivtx++) {
+        typename VolumeMesh::Element::template VertexArray<double> phival;
+        for (int ivtx = 0; ivtx < phival.size(); ivtx++) {
             phival[ivtx] = phid0[mesh.cells[icell][ivtx]];
             if (phival[ivtx] > 0.0) {
                 phi_pos.push_back(ivtx);
@@ -212,13 +210,13 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
                 // Number near zero will cause problem in hash function
                 // Update: New version of hash function does not need to
                 // clip the data
-                // clip the data
-                double clip_tol = 1e-10;
-                for (int ic = 0; ic < 3; ic++) {
-                    if (std::abs(phi_cor[ic]) < clip_tol) {
-                        phi_cor[ic] = 0.0;
-                    }
-                }
+
+                // double clip_tol = 1e-10;
+                // for (int ic = 0; ic < 3; ic++) {
+                //     if (std::abs(phi_cor[ic]) < clip_tol) {
+                //         phi_cor[ic] = 0.0;
+                //     }
+                // }
 
                 // save phi=0 coordinate
                 phi_tmp_vertex.push_back(phi_coord);
@@ -492,7 +490,8 @@ inline void clean_triangle(TriangleMesh &mesh, int criteria) {
         removable_triangle_index.begin(), removable_triangle_index.end());
     // copy the remaining triangles to a new mesh
     TriangleMesh mesh_clean;
-    const auto nvtx_triangle = typename TriangleMesh::Element::n_vertices;
+    using TriangleElement = typename TriangleMesh::Element;
+    constexpr auto nvtx_triangle = TriangleElement::n_vertices;
     mesh_clean.elements.reserve(
         mesh.elements.size() - nvtx_triangle * removable_triangle_index.size());
     for (std::size_t i = 0; i < mesh.elements.size(); i += nvtx_triangle) {
@@ -543,7 +542,7 @@ void combine_triangle(const std::vector<Point3D> &phi_vertex,
     int ver_glo_index_cur = 0;
 
     // std::unordered_map<std::string, int> ver_glo_index_map;
-    details::Point3DMap<size_t> ver_glo_index_map;
+    details::UnorderedMap<Point3D, std::size_t> ver_glo_index_map;
 
     std::vector<double> vx_un_res;
     std::vector<double> vy_un_res;
@@ -578,9 +577,9 @@ void combine_triangle(const std::vector<Point3D> &phi_vertex,
     // MPI::broadcast(MPI_COMM_WORLD,phi_cx_glo);
     // MPI::broadcast(MPI_COMM_WORLD,phi_cy_glo);
     // MPI::broadcast(MPI_COMM_WORLD,phi_cz_glo);
-    details::MPI_allgatherv(MPI_COMM_WORLD, phi_cx_loc, phi_cx_glo);
-    details::MPI_allgatherv(MPI_COMM_WORLD, phi_cy_loc, phi_cy_glo);
-    details::MPI_allgatherv(MPI_COMM_WORLD, phi_cz_loc, phi_cz_glo);
+    details::MPI_allgather(MPI_COMM_WORLD, phi_cx_loc, phi_cx_glo);
+    details::MPI_allgather(MPI_COMM_WORLD, phi_cy_loc, phi_cy_glo);
+    details::MPI_allgather(MPI_COMM_WORLD, phi_cz_loc, phi_cz_glo);
 
     for (int itmp = 0; itmp < phi_cx_glo.size(); itmp++) {
         Point3D point{phi_cx_glo[itmp], phi_cy_glo[itmp], phi_cz_glo[itmp]};
@@ -869,7 +868,7 @@ void compute_normal(
 }
 
 // clean the triangles
-template <typename T, std::enable_if<std::is_integral<T>::value, int>::type = 0>
+template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
 void clean_triangles(std::vector<Point3D> &vertices, std::vector<T> &elements) {
 
     // remove duplicate vertices
@@ -885,7 +884,7 @@ void clean_triangles(std::vector<Point3D> &vertices, std::vector<T> &elements) {
     }
 
     // remove duplicate triangles
-    using Triangle = details::Triple<T>;
+    using Triangle = details::Triplet<T>;
     details::UnorderedSet<Triangle> triangle_set;
     for (std::size_t i = 0; i < elements.size(); i += 3) {
         Triangle triangle(elements[i], elements[i + 1], elements[i + 2]);
@@ -893,11 +892,11 @@ void clean_triangles(std::vector<Point3D> &vertices, std::vector<T> &elements) {
         if (it != triangle_set.end()) {
             continue;
         }
-        triangle_set.insert(triangle);
+        triangle_set.insert(triangle_set);
     }
 
     // update triangle indices following the new vertex indices
-    std::for_each(triangle_set.begin(), triangle.end(), [&](Triangle &t) {
+    std::for_each(triangle_set.begin(), triangle_set.end(), [&](Triangle &t) {
         t[0] = vertex_map[vertices[t[0]]];
         t[1] = vertex_map[vertices[t[1]]];
         t[2] = vertex_map[vertices[t[2]]];
@@ -1009,7 +1008,7 @@ template <> struct Redistance<TetrahedronMesh> {
     void init(const std::vector<double> &phid0,
               int small_droplet_tolerance = 100) {
         // Gather the levelset function
-        details::MPI_DataDistribution dist;
+        details::MPI_DataDistributor<std::size_t, double> dist;
         std::vector<int> gid;
         for (int ivtx = 0; ivtx < domain.vertices.size(); ivtx++) {
             gid.push_back(mesh.vertex_local2global[ivtx]);

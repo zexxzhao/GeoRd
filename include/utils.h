@@ -46,6 +46,7 @@ inline void hash_con(int x, int y, int z, std::string &res_str) {
     res_str = x_str + "," + y_str + "," + z_str;
 };
 
+template<typename>
 std::false_type is_subscriptable_impl(...);
 template<typename T>
 auto is_subscriptable_impl(int) -> decltype(std::declval<T>()[0], std::true_type());
@@ -118,7 +119,7 @@ struct KeyEqual<Triplet<T>,
 };
 
 // Partial specialization for KeyEqual<Point3D> using SFINAE
-template <typename T> struct KeyEqual<T, typename std::enable_if<Subscriptable<T>::value, void>::type> {
+template <typename T> struct KeyEqual<T, typename std::enable_if<Subscriptable<T>::value>::type> {
     bool operator()(const T &p1, const T &p2) const {
         using U = decltype(p1[0]);
         return KeyEqual<Triplet<U>>()(
@@ -131,7 +132,7 @@ template <typename Key, typename Value>
 using UnorderedMap =
     std::unordered_map<Key, Value, HashTable<Key>, KeyEqual<Key>>;
 
-template <typename Key, typename Value>
+template <typename Key>
 using UnorderedSet = std::unordered_set<Key, HashTable<Key>, KeyEqual<Key>>;
 
 } // namespace GeoRd::details

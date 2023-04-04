@@ -3,6 +3,7 @@
 
 #include "Graph.h"
 #include "Point.h"
+#include <array>
 #include <vector>
 
 namespace GeoRd {
@@ -13,6 +14,8 @@ struct ElementProperty {
     static constexpr T n_vertices = t0;
     static constexpr T n_edges = t1;
     static constexpr T n_faces = t2;
+    template<typename U>
+    using VertexArray = std::array<U, n_vertices>;
 };
 
 using Point = ElementProperty<int, 0, 1, 0, 0>;
