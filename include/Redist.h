@@ -145,10 +145,10 @@ int compute_diagonal_direction(std::vector<Point3D> &phi_tmp_vertex) {
 
 // Adding triangle
 // 1 triangle or 2 triangles
-template <typename VolumeMesh>
-void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
+template <typename VolumeMesh, typename LevelSetValueType = double, typename IntegerType = int>
+void add_triangle(const VolumeMesh &mesh, const std::vector<LevelSetValueType> &phid0,
                   std::vector<Point3D> &phi_vertex,
-                  std::vector<int> &phi_connect) {
+                  std::vector<IntegerType> &phi_connect) {
     // std::vector<Point>             phi_tmp_vertex;
     // std::vector<Point>             phi_tet_vertex;
 
@@ -178,16 +178,17 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
         // std::vector<int>().swap(phi_pos);
         // std::vector<int>().swap(phi_neg);
         std::vector<Point3D> phi_tmp_vertex;
-        typename VolumeMesh::Element::template VertexArray<double> phi_tet_vertex;
+        // typename VolumeMesh::Element::template VertexArray<Point3D> phi_tet_vertex;
+        std::vector<Point3D> phi_tet_vertex;
         std::vector<int> phi_pos, phi_neg;
 
         // Get the coordinate of four vertex
         // mesh.get_cell_coordinates(icell, coordinate_dofs);
-        mesh.get_cell_vertices(icell, phi_tet_vertex);
+        mesh.get_cell_coordinates(icell, phi_tet_vertex);
         // Get the phi value of four vertex
         typename VolumeMesh::Element::template VertexArray<double> phival;
         for (int ivtx = 0; ivtx < phival.size(); ivtx++) {
-            phival[ivtx] = phid0[mesh.cells[icell][ivtx]];
+            phival[ivtx] = phid0[mesh.elements[icell * 4 + ivtx]];
             if (phival[ivtx] > 0.0) {
                 phi_pos.push_back(ivtx);
             }
@@ -335,396 +336,6 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<double> &phid0,
     }
 }
 
-// clean triangle
-void clean_triangle(const std::vector<int> &c1_tmp,
-                    const std::vector<int> &c2_tmp,
-                    const std::vector<int> &c3_tmp, std::vector<int> &c1_res,
-                    std::vector<int> &c2_res, std::vector<int> &c3_res,
-                    const std::vector<double> &vx_un_res,
-                    const std::vector<double> &vy_un_res,
-                    const std::vector<double> &vz_un_res,
-                    std::vector<double> &vx_res, std::vector<double> &vy_res,
-                    std::vector<double> &vz_res) {
-    std::vector<int> c1_un_res;
-    std::vector<int> c2_un_res;
-    std::vector<int> c3_un_res;
-
-    std::vector<int> color;
-    std::vector<int> color_num;
-    std::vector<int> ver_map;
-    ver_map.resize(vx_un_res.size());
-
-    int con_glo_index_cur = 0;
-    std::string hash_tmp;
-    // std::unordered_map<std::string, int> con_glo_index_map;
-    details::UnorderedMap<details::Triplet<int>, std::size_t> con_glo_index_map;
-
-    int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
-
-    // Triangle cleaning
-    if (rankvalues == 0) {
-        // Map triangle to global index
-        for (int itmp = 0; itmp < c1_tmp.size(); itmp++) {
-
-            if (c1_tmp[itmp] == c2_tmp[itmp] or c1_tmp[itmp] == c3_tmp[itmp] or
-                c2_tmp[itmp] == c3_tmp[itmp]) {
-                continue;
-            }
-            details::Triplet<int> tri_tmp{c1_tmp[itmp], c2_tmp[itmp],
-                                          c3_tmp[itmp]};
-            auto it = con_glo_index_map.find(tri_tmp);
-            if (it == con_glo_index_map.end()) {
-                c1_un_res.push_back(c1_tmp[itmp]);
-                c2_un_res.push_back(c2_tmp[itmp]);
-                c3_un_res.push_back(c3_tmp[itmp]);
-                con_glo_index_map.insert({tri_tmp, con_glo_index_cur});
-                con_glo_index_cur++;
-            }
-        }
-
-        // cal_color(node_connect, color, color_num);
-        for (int i = 0; i < color_num.size(); i++) {
-            std::cout << "    Surface color " << i
-                      << " number: " << color_num[i] << std::endl;
-        }
-        // write_interface_txt(vx_un_res, vy_un_res, vz_un_res, color);
-
-        int num_tol = 50;
-        int clean_index = 0;
-        for (int i = 0; i < node_connect.size(); i++) {
-            int color_nk = color_num[color[i] - 1];
-            // std::cout<<"Index "<<i<<" number: "<<color_nk<<std::endl;
-            if (color_nk >= num_tol) {
-                vx_res.push_back(vx_un_res[i]);
-                vy_res.push_back(vy_un_res[i]);
-                vz_res.push_back(vz_un_res[i]);
-                ver_map[i] = clean_index;
-                clean_index++;
-            }
-            else {
-                ver_map[i] = -1;
-            }
-        }
-
-        for (int iele = 0; iele < c1_un_res.size(); iele++) {
-            int c1_index = c1_un_res[iele];
-            int c2_index = c2_un_res[iele];
-            int c3_index = c3_un_res[iele];
-
-            int v1_vermap_val = ver_map[c1_index];
-            int v2_vermap_val = ver_map[c2_index];
-            int v3_vermap_val = ver_map[c3_index];
-
-            if (v1_vermap_val == -1 or v2_vermap_val == -1 or
-                v3_vermap_val == -1) {
-                continue;
-            }
-            else {
-                c1_res.push_back(v1_vermap_val);
-                c2_res.push_back(v2_vermap_val);
-                c3_res.push_back(v3_vermap_val);
-            }
-        }
-    }
-
-    details::MPI_broadcast(MPI_COMM_WORLD, vx_res);
-    details::MPI_broadcast(MPI_COMM_WORLD, vy_res);
-    details::MPI_broadcast(MPI_COMM_WORLD, vz_res);
-
-    details::MPI_broadcast(MPI_COMM_WORLD, c1_res);
-    details::MPI_broadcast(MPI_COMM_WORLD, c2_res);
-    details::MPI_broadcast(MPI_COMM_WORLD, c3_res);
-}
-
-template <typename T>
-void get_duplicated_triangles(const TriangleMesh &mesh,
-                              std::vector<T> &duplicated_triangle_index) {
-    using Triangle = details::Triplet<std::size_t>;
-    std::unordered_set<Triangle, details::HashTable<Triangle>,
-                       details::KeyEqual<Triangle>>
-        triangles;
-
-    for (std::size_t i = 0; i < mesh.elements.size();
-         i += typename TriangleMesh::Element::n_vertices) {
-        Triangle tri_tmp{mesh.elements[i], mesh.elements[i + 1],
-                         mesh.elements[i + 2]};
-        if (triangles.find(tri_tmp) == triangles.end()) {
-            triangles.insert(tri_tmp);
-        }
-        else {
-            duplicated_triangle_index.push_back(i);
-        }
-    }
-}
-
-template <typename T>
-void get_small_droplets(const TriangleMesh &mesh,
-                        std::vector<T> &small_droplets_index, int criteria) {
-    // generate vertex connectivity
-    Graph graph;
-    get_vertex_connectivity(mesh, graph);
-
-    // traverse the graph and color the vertices
-    std::vector<std::vector<size_t>> color;
-    connected_components(graph, color);
-
-    // remove small droplets
-    std::for_each(
-        color.begin(), color.end(), [&](std::vector<size_t> &color_i) {
-            if (color_i.size() < criteria) {
-                small_droplets_index.insert(small_droplets_index.end(),
-                                            color_i.begin(), color_i.end());
-            }
-        });
-}
-
-// remove duplicated triangles and small droplets
-inline void clean_triangle(TriangleMesh &mesh, int criteria) {
-    if (details::MPI_rank()) {
-        return;
-    }
-    std::vector<std::size_t> removable_triangle_index;
-    get_duplicated_triangles(mesh, removable_triangle_index);
-    get_small_droplets(mesh, removable_triangle_index, criteria);
-    std::set<std::size_t> removable_triangle_index_set(
-        removable_triangle_index.begin(), removable_triangle_index.end());
-    // copy the remaining triangles to a new mesh
-    TriangleMesh mesh_clean;
-    using TriangleElement = typename TriangleMesh::Element;
-    constexpr auto nvtx_triangle = TriangleElement::n_vertices;
-    mesh_clean.elements.reserve(
-        mesh.elements.size() - nvtx_triangle * removable_triangle_index.size());
-    for (std::size_t i = 0; i < mesh.elements.size(); i += nvtx_triangle) {
-        if (removable_triangle_index_set.find(i) ==
-            removable_triangle_index_set.end()) {
-            mesh_clean.elements.push_back(mesh.elements[i]);
-            mesh_clean.elements.push_back(mesh.elements[i + 1]);
-            mesh_clean.elements.push_back(mesh.elements[i + 2]);
-        }
-    }
-    // collect the remaining vertices
-    std::set<std::size_t> remaining_vertices;
-    for (std::size_t i = 0; i < mesh_clean.elements.size(); i++) {
-        remaining_vertices.insert(mesh_clean.elements[i]);
-    }
-    // copy the remaining vertices to a new mesh
-    mesh_clean.vertices.reserve(remaining_vertices.size());
-    for (std::size_t i = 0; i < mesh.vertices.size(); i++) {
-        if (remaining_vertices.find(i) != remaining_vertices.end()) {
-            mesh_clean.vertices.push_back(mesh.vertices[i]);
-        }
-    }
-    // update the vertex indices in the elements
-    std::unordered_map<std::size_t, std::size_t> vertex_index_map;
-    std::size_t new_index = 0;
-    for (std::size_t i = 0; i < mesh_clean.elements.size(); i++) {
-        auto it = vertex_index_map.find(mesh_clean.elements[i]);
-        if (it == vertex_index_map.end()) {
-            vertex_index_map[mesh_clean.elements[i]] = new_index;
-            mesh_clean.elements[i] = new_index;
-            new_index++;
-        }
-        else {
-            mesh_clean.elements[i] = it->second;
-        }
-    }
-    // update the mesh
-    mesh = std::move(mesh_clean);
-}
-
-// combine triangles
-void combine_triangle(const std::vector<Point3D> &phi_vertex,
-                      const std::vector<std::vector<int>> &phi_connect,
-                      std::vector<double> &vx_res, std::vector<double> &vy_res,
-                      std::vector<double> &vz_res, std::vector<int> &c1_res,
-                      std::vector<int> &c2_res, std::vector<int> &c3_res) {
-    std::string hash_tmp;
-    int ver_glo_index_cur = 0;
-
-    // std::unordered_map<std::string, int> ver_glo_index_map;
-    details::UnorderedMap<Point3D, std::size_t> ver_glo_index_map;
-
-    std::vector<double> vx_un_res;
-    std::vector<double> vy_un_res;
-    std::vector<double> vz_un_res;
-
-    std::vector<int> c1_tmp;
-    std::vector<int> c2_tmp;
-    std::vector<int> c3_tmp;
-
-    // Following code remove the same vertex over different processor
-    // Make sure they are unique
-    // MPI communication:
-    std::vector<double> phi_cx_loc;
-    std::vector<double> phi_cy_loc;
-    std::vector<double> phi_cz_loc;
-    std::vector<double> phi_cx_glo;
-    std::vector<double> phi_cy_glo;
-    std::vector<double> phi_cz_glo;
-
-    // copy to local vector
-    for (int iphi = 0; iphi < phi_vertex.size(); iphi++) {
-        phi_cx_loc.push_back(phi_vertex[iphi].x());
-        phi_cy_loc.push_back(phi_vertex[iphi].y());
-        phi_cz_loc.push_back(phi_vertex[iphi].z());
-    }
-
-    // MPI communication
-    // MPI::gather(MPI_COMM_WORLD,phi_cx_loc,phi_cx_glo);
-    // MPI::gather(MPI_COMM_WORLD,phi_cy_loc,phi_cy_glo);
-    // MPI::gather(MPI_COMM_WORLD,phi_cz_loc,phi_cz_glo);
-
-    // MPI::broadcast(MPI_COMM_WORLD,phi_cx_glo);
-    // MPI::broadcast(MPI_COMM_WORLD,phi_cy_glo);
-    // MPI::broadcast(MPI_COMM_WORLD,phi_cz_glo);
-    details::MPI_allgather(MPI_COMM_WORLD, phi_cx_loc, phi_cx_glo);
-    details::MPI_allgather(MPI_COMM_WORLD, phi_cy_loc, phi_cy_glo);
-    details::MPI_allgather(MPI_COMM_WORLD, phi_cz_loc, phi_cz_glo);
-
-    for (int itmp = 0; itmp < phi_cx_glo.size(); itmp++) {
-        Point3D point{phi_cx_glo[itmp], phi_cy_glo[itmp], phi_cz_glo[itmp]};
-        auto it = ver_glo_index_map.find(point);
-        if (it == ver_glo_index_map.end()) {
-            ver_glo_index_map[point] = ver_glo_index_cur;
-            ver_glo_index_cur++;
-
-            // Add new vertex to global vector
-            vx_un_res.push_back(phi_cx_glo[itmp]);
-            vy_un_res.push_back(phi_cy_glo[itmp]);
-            vz_un_res.push_back(phi_cz_glo[itmp]);
-        }
-        // hash_cor(phi_cx_glo[itmp],phi_cy_glo[itmp],phi_cz_glo[itmp],hash_tmp);
-        // auto hash_sear = ver_glo_index_map.find(hash_tmp);
-        // //std::cout << hash_tmp << std::endl;
-        // if( hash_sear == ver_glo_index_map.end() ){
-        //     ver_glo_index_map[hash_tmp] = ver_glo_index_cur;
-        //     ver_glo_index_cur++;
-
-        //     // Add new vertex to global vector
-        //     vx_un_res.push_back( phi_cx_glo[itmp] );
-        //     vy_un_res.push_back( phi_cy_glo[itmp] );
-        //     vz_un_res.push_back( phi_cz_glo[itmp] );
-        // }
-    }
-
-    // Following code do MPI communication and change the old index in
-    // connect to new index
-    std::vector<int> tri_a_index_loc;
-    std::vector<int> tri_b_index_loc;
-    std::vector<int> tri_c_index_loc;
-    std::vector<int> tri_a_index_tmp;
-    std::vector<int> tri_b_index_tmp;
-    std::vector<int> tri_c_index_tmp;
-
-    // copy to local vector
-    for (int iphi = 0; iphi < phi_connect.size(); iphi++) {
-        tri_a_index_loc.push_back(phi_connect[iphi][0]);
-        tri_b_index_loc.push_back(phi_connect[iphi][1]);
-        tri_c_index_loc.push_back(phi_connect[iphi][2]);
-    }
-
-    // transform old index to new index on each local processor first
-    for (int itmp = 0; itmp < tri_a_index_loc.size(); itmp++) {
-        auto it = ver_glo_index_map.find(phi_vertex[tri_a_index_loc[itmp]]);
-        if (it != ver_glo_index_map.end()) {
-            tri_a_index_tmp.push_back(it->second);
-        }
-        else {
-            printf("Error: can not find the vertex in local processor");
-        }
-        // double tmp_cx = phi_vertex[tri_a_index_loc[itmp]].x();
-        // double tmp_cy = phi_vertex[tri_a_index_loc[itmp]].y();
-        // double tmp_cz = phi_vertex[tri_a_index_loc[itmp]].z();
-
-        // hash_cor(tmp_cx,tmp_cy,tmp_cz,hash_tmp);
-        // auto hash_sear = ver_glo_index_map.find(hash_tmp);
-        // if( hash_sear != ver_glo_index_map.end() ){
-        //     tri_a_index_tmp.push_back( hash_sear->second );
-        //     //printf("before:%.15e, %.15e,
-        //     %.15e\n",tmp_cx,tmp_cy,tmp_cz);
-        //     //printf("after:%.15e, %.15e,
-        //     %.15e\n",vx_un_res[hash_sear->second],vy_un_res[hash_sear->second],vz_un_res[hash_sear->second]);
-        //     //std::cout<<std::endl;
-        // }
-        // else{
-        //     //std::cout << "rank: " << rankvalues << " " << "index: " <<
-        //     tri_a_index_loc[itmp] << " " <<  tmp_cx << " " << tmp_cy << "
-        //     " << tmp_cz << std::endl; std::cout << "Search in
-        //     ver_glo_index_map not found. Must be something wrong." <<
-        //     std::endl;
-        // }
-    }
-
-    for (int itmp = 0; itmp < tri_b_index_loc.size(); itmp++) {
-        auto it = ver_glo_index_map.find(phi_vertex[tri_b_index_loc[itmp]]);
-        if (it != ver_glo_index_map.end()) {
-            tri_b_index_tmp.push_back(it->second);
-        }
-        else {
-            printf("Error: can not find the vertex in local processor");
-        }
-        // double tmp_cx = phi_vertex[tri_b_index_loc[itmp]].x();
-        // double tmp_cy = phi_vertex[tri_b_index_loc[itmp]].y();
-        // double tmp_cz = phi_vertex[tri_b_index_loc[itmp]].z();
-
-        // hash_cor(tmp_cx,tmp_cy,tmp_cz,hash_tmp);
-        // auto hash_sear = ver_glo_index_map.find(hash_tmp);
-        // if( hash_sear != ver_glo_index_map.end() ){
-        //     tri_b_index_tmp.push_back( hash_sear->second );
-        //     //printf("before:%.15e, %.15e,
-        //     %.15e\n",tmp_cx,tmp_cy,tmp_cz);
-        //     //printf("after:%.15e, %.15e,
-        //     %.15e\n",vx_un_res[hash_sear->second],vy_un_res[hash_sear->second],vz_un_res[hash_sear->second]);
-        //     //std::cout<<std::endl;
-        // }
-        // else{
-        //     //std::cout << "rank: " << rankvalues << " " << "index: " <<
-        //     tri_b_index_loc[itmp] << " " <<  tmp_cx << " " << tmp_cy << "
-        //     " << tmp_cz << std::endl; std::cout << "Search in
-        //     ver_glo_index_map not found. Must be something wrong." <<
-        //     std::endl;
-        // }
-    }
-
-    for (int itmp = 0; itmp < tri_c_index_loc.size(); itmp++) {
-        auto it = ver_glo_index_map.find(phi_vertex[tri_c_index_loc[itmp]]);
-        if (it != ver_glo_index_map.end()) {
-            tri_c_index_tmp.push_back(it->second);
-        }
-        else {
-            printf("Error: can not find the vertex in local processor");
-        }
-        // double tmp_cx = phi_vertex[tri_c_index_loc[itmp]].x();
-        // double tmp_cy = phi_vertex[tri_c_index_loc[itmp]].y();
-        // double tmp_cz = phi_vertex[tri_c_index_loc[itmp]].z();
-
-        // hash_cor(tmp_cx,tmp_cy,tmp_cz,hash_tmp);
-        // auto hash_sear = ver_glo_index_map.find(hash_tmp);
-        // if( hash_sear != ver_glo_index_map.end() ){
-        //     tri_c_index_tmp.push_back( hash_sear->second );
-        //     //printf("before:%.15e, %.15e,
-        //     %.15e\n",tmp_cx,tmp_cy,tmp_cz);
-        //     //printf("after:%.15e, %.15e,
-        //     %.15e\n",vx_un_res[hash_sear->second],vy_un_res[hash_sear->second],vz_un_res[hash_sear->second]);
-        //     //std::cout<<std::endl;
-        // }
-        // else{
-        //     //std::cout << "rank: " << rankvalues << " " << "index: " <<
-        //     tri_c_index_loc[itmp] << " " <<  tmp_cx << " " << tmp_cy << "
-        //     " << tmp_cz << std::endl; std::cout << "Search in
-        //     ver_glo_index_map not found. Must be something wrong." <<
-        //     std::endl;
-        // }
-    }
-
-    // MPI communication
-    details::MPI_gather(MPI_COMM_WORLD, tri_a_index_tmp, c1_tmp);
-    details::MPI_gather(MPI_COMM_WORLD, tri_b_index_tmp, c2_tmp);
-    details::MPI_gather(MPI_COMM_WORLD, tri_c_index_tmp, c3_tmp);
-
-    clean_triangle(c1_tmp, c2_tmp, c3_tmp, c1_res, c2_res, c3_res, vx_un_res,
-                   vy_un_res, vz_un_res, vx_res, vy_res, vz_res);
-}
 
 void filter_point(std::vector<double> &vx_res, std::vector<double> &vy_res,
                   std::vector<double> &vz_res,
@@ -887,20 +498,24 @@ void clean_triangles(std::vector<Point3D> &vertices, std::vector<T> &elements) {
     using Triangle = details::Triplet<T>;
     details::UnorderedSet<Triangle> triangle_set;
     for (std::size_t i = 0; i < elements.size(); i += 3) {
-        Triangle triangle(elements[i], elements[i + 1], elements[i + 2]);
+        Triangle triangle{elements[i], elements[i + 1], elements[i + 2]};
         auto it = triangle_set.find(triangle);
         if (it != triangle_set.end()) {
             continue;
         }
-        triangle_set.insert(triangle_set);
+        triangle_set.insert(triangle);
     }
 
     // update triangle indices following the new vertex indices
-    std::for_each(triangle_set.begin(), triangle_set.end(), [&](Triangle &t) {
-        t[0] = vertex_map[vertices[t[0]]];
-        t[1] = vertex_map[vertices[t[1]]];
-        t[2] = vertex_map[vertices[t[2]]];
-    });
+    decltype(triangle_set) new_triangle_set;
+    for(auto &t : triangle_set){
+        auto copy = t;
+        copy[0] = vertex_map.at(vertices[copy[0]]);
+        copy[1] = vertex_map.at(vertices[copy[1]]);
+        copy[2] = vertex_map.at(vertices[copy[2]]);
+        new_triangle_set.insert(copy);
+    };
+    triangle_set = new_triangle_set;
 
     // update vertices
     vertices.resize(vertex_map.size());
@@ -967,11 +582,11 @@ template <typename VolumeMesh, typename SurfaceMesh>
 void get_free_surface(const VolumeMesh &mesh, const std::vector<double> &phid0,
                       SurfaceMesh &surface) {
     std::vector<Point3D> vertices;
-    std::vector<int> elements;
+    std::vector<std::size_t> elements;
     add_triangle(mesh, phid0, vertices, elements);
     // Gather vertices and elements
     std::vector<Point3D> vertices_all;
-    std::vector<int> elements_all;
+    std::vector<std::size_t> elements_all;
     details::MPI_allgather(MPI_COMM_WORLD, vertices, vertices_all);
     details::MPI_allgather(MPI_COMM_WORLD, elements, elements_all);
     // Clean triangles
@@ -1008,10 +623,10 @@ template <> struct Redistance<TetrahedronMesh> {
     void init(const std::vector<double> &phid0,
               int small_droplet_tolerance = 100) {
         // Gather the levelset function
-        details::MPI_DataDistributor<std::size_t, double> dist;
-        std::vector<int> gid;
+        details::MPI_DataDistributor<std::size_t, double> dist(MPI_COMM_WORLD);
+        std::vector<std::size_t> gid;
         for (int ivtx = 0; ivtx < domain.vertices.size(); ivtx++) {
-            gid.push_back(mesh.vertex_local2global[ivtx]);
+            gid.push_back(domain.vertex_local2global[ivtx]);
         }
         phi = phid0;
         dist.gather(gid, phi);
@@ -1027,7 +642,7 @@ template <> struct Redistance<TetrahedronMesh> {
 
         // Generate the free surface mesh
         SurfaceMesh free_surface_mesh;
-        get_free_surface(domain, phi, free_surface_mesh);
+        details::get_free_surface(domain, phi, free_surface_mesh);
         // Compute the normal vector of the free surface
         details::compute_normal_vector(
             free_surface_mesh, representation.vertices, representation.normals);
@@ -1074,14 +689,14 @@ template <> struct Redistance<TetrahedronMesh> {
                              [&](std::size_t i, std::size_t j) {
                                  return scalar_field[i] * scalar_field[j] > 0.0;
                              });
-        for (int i = 0; i < color_num.size(); i++) {
-            std::cout << "    Volume color " << i << " number: " << color_num[i]
+        for (int i = 0; i < components.size(); i++) {
+            std::cout << "    Volume color " << i << " number: " << components[i].size()
                       << std::endl;
         }
         // get inter-patch connectivity
         std::vector<std::vector<std::size_t>> inter_patch_connectivity;
         get_inter_patch_connectivity(this->global_vertex_connectivity,
-                                     inter_patch_connectivity);
+                                     components, inter_patch_connectivity);
 
         // attach the small droplets to the large neighboring droplets
         // 1. find the small droplets ID
@@ -1157,7 +772,7 @@ template <> struct Redistance<TetrahedronMesh> {
         for (int i = 0; i < representative_vertex.size(); ++i) {
             for (int j = i + 1; j < representative_vertex.size(); ++j) {
                 std::vector<std::size_t> path;
-                details::get_path(vertex_connectivity, representative_vertex[i],
+                get_path(vertex_connectivity, representative_vertex[i],
                                   representative_vertex[j], path);
                 if (path.size() > 0) {
                     inter_patch_connectivity[i].push_back(j);

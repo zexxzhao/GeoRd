@@ -141,8 +141,8 @@ Box3D build_bounding_box(PointIT begin, PointIT end, double box_tol = 1e-6) {
         });
 
     // build the bounding box
-    Point3D p0{*xmin - box_tol, *ymin - box_tol, *zmin - box_tol};
-    Point3D p1{*xmax + box_tol, *ymax + box_tol, *zmax + box_tol};
+    Point3D p0{(*xmin)[0] - box_tol, (*ymin)[1] - box_tol, (*zmin)[2] - box_tol};
+    Point3D p1{(*xmax)[0] + box_tol, (*ymax)[1] + box_tol, (*zmax)[2] + box_tol};
     return Box3D{p0, p1};
 }
 
@@ -294,7 +294,7 @@ template <int _Tag> struct Octree<Point3D, _Tag> {
     void search_point(Point3D pcur, int &index, double &rval) {
         index = 0;
         rval = (pcur - this->pdat[0]).norm();
-        search_point_help(pcur, 0, this->root, this->box_cor, index, rval);
+        search_point_help(pcur, 0, this->root, this->box_coord, index, rval);
     }
 
     void search_point_help(Point3D pcur, int level, TreeNode<3> &cur,

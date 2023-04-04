@@ -4,7 +4,7 @@
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
-    init(argc, argv);
+    details::init(argc, argv);
 	::testing::AddGlobalTestEnvironment(new GTestMPIListener::MPIEnvironment);
 	::testing::TestEventListeners& listeners = ::testing::UnitTest::GetInstance()->listeners();
 	delete listeners.Release(listeners.default_result_printer());

@@ -3,6 +3,8 @@
 CXX=mpicxx
 FLAGS=-O2 -std=c++17
 
+LIBS=-lgtest
+
 SRC=test.cpp
 
 

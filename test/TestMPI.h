@@ -4,6 +4,7 @@
 #include "gtest-mpi-listener.h"
 #include "../include/GeoRd.h"
 
+using namespace GeoRd;
 TEST(MPI, Basic) {
     int rank = details::MPI_rank();
     int size = details::MPI_size();
@@ -26,13 +27,13 @@ TEST(MPI, Basic) {
 }
 
 TEST(MPI, DataType) {
-    ASSERT_EQ(MPI_INT, details::MPI_Type<int>());
-    ASSERT_EQ(MPI_DOUBLE, details::MPI_Type<double>());
-    ASSERT_EQ(MPI_FLOAT, details::MPI_Type<float>());
-    ASSERT_EQ(MPI_INT64_T, details::MPI_Type<int64_t>());
-    ASSERT_EQ(MPI_UNSIGNED_LONG, details::MPI_Type<unsigned long>());
-    ASSERT_EQ(MPI_UNSIGNED, details::MPI_Type<unsigned>());
-    ASSERT_EQ(MPI_UNSIGNED_SHORT, details::MPI_Type<unsigned short>());
+    ASSERT_EQ(MPI_INT, details::MPI_type<int>());
+    ASSERT_EQ(MPI_DOUBLE, details::MPI_type<double>());
+    ASSERT_EQ(MPI_FLOAT, details::MPI_type<float>());
+    ASSERT_EQ(MPI_INT64_T, details::MPI_type<int64_t>());
+    ASSERT_EQ(MPI_UNSIGNED_LONG, details::MPI_type<unsigned long>());
+    ASSERT_EQ(MPI_UNSIGNED, details::MPI_type<unsigned>());
+    ASSERT_EQ(MPI_UNSIGNED_SHORT, details::MPI_type<unsigned short>());
 }
 
 TEST(MPI, gather) {
@@ -44,7 +45,7 @@ TEST(MPI, gather) {
     std::fill(sendbuf.begin(), sendbuf.end(), rank);
 
     int root = 0;
-    details::MPI_Gather(MPI_COMM_WORLD, sendbuf, recvbuf, root);
+    details::MPI_gather(MPI_COMM_WORLD, sendbuf, recvbuf, root);
 
     for (int i = 0; i < size; ++i) {
         for (int j = 0; j < size; ++j) {
@@ -66,7 +67,7 @@ TEST(MPI, scatter) {
     }
 
     int root = 0;
-    details::MPI_Scatter(MPI_COMM_WORLD, sendbuf, recvbuf, root);
+    details::MPI_scatter(MPI_COMM_WORLD, sendbuf, recvbuf, root);
 
     for (int i = 0; i < recvbuf.size(); ++i) {
         ASSERT_EQ(recvbuf[i], rank);
@@ -77,7 +78,7 @@ TEST(MPI, Distributor) {
     int rank = details::MPI_rank();
     int size = details::MPI_size();
 
-    details::Distributor distributor(MPI_COMM_WORLD);
+    details::MPI_DataDistributor<int, int> distributor(MPI_COMM_WORLD);
     std::vector<int> keys_send(size);
     std::vector<int> valye_send(size);
     for(int i = 0; i < size; ++i) {
@@ -86,7 +87,7 @@ TEST(MPI, Distributor) {
     }
     distributor.gather(keys_send, valye_send);
     if(rank == 0) {
-        for(int i = 0; i < distributor.size(); ++i) {
+        for(int i = 0; i < distributor.keys.size(); ++i) {
             ASSERT_EQ(distributor.keys[i], i);
             ASSERT_EQ(distributor.values[i], i);
         }
