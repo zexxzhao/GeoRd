@@ -1,9 +1,4 @@
 
-CXX=mpicxx
-FLAGS=-O2 -std=c++17 -g -fsanitize=address
-
-LIB_DIR=-L/home/zezhao/local/gtest/lib -L/home/zezhao/local/gcc/lib64/
-LIBS=-lgtest -lasan
 
 SRC=test.cpp
 OBJ=$(SRC:%.cpp=build/%.o)
@@ -11,6 +6,8 @@ DEP=$(SRC:%.cpp=build/%.d)
 EXE=build/main
 
 DIR=build/
+
+include config.make
 
 all: ${EXE}
 
