@@ -9,6 +9,7 @@
 
 # Testing
 test/build/*
+*.make
 
 # Precompiled Headers
 *.gch
