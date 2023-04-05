@@ -128,7 +128,7 @@ void MPI_gather(MPI_Comm comm, const std::vector<T> &in, std::vector<T> &out,
 // For Point3D
 template <typename T>
 auto MPI_gather(MPI_Comm comm, const std::vector<T> &in,
-                std::vector<T> &out) -> typename std::enable_if<details::Subscriptable<T>::value>::type {
+                std::vector<T> &out, int recv_proc) -> typename std::enable_if<details::Subscriptable<T>::value>::type {
     using DataType = typename T::AtomizedType;
     std::vector<DataType> in_data, out_data;
     in_data.reserve(in.size() * 3);
@@ -137,7 +137,7 @@ auto MPI_gather(MPI_Comm comm, const std::vector<T> &in,
         in_data.push_back(p.y);
         in_data.push_back(p.z);
     }
-    MPI_gather(comm, in_data, out_data);
+    MPI_gather(comm, in_data, out_data, recv_proc);
     out.reserve(out_data.size() / 3);
     for (size_t i = 0; i < out.size(); ++i) {
         out.emplace_back(out_data[i * 3], out_data[i * 3 + 1],
@@ -197,25 +197,29 @@ void MPI_broadcast(MPI_Comm comm, std::vector<T> &value, int send_proc = 0) {
 }
 
 template <typename T>
-void MPI_scatter(MPI_Comm comm, const std::vector<std::vector<T>> send_data,
-                 std::vector<T> recv_data, int send_proc = 0) {
+void MPI_scatter(MPI_Comm comm, const std::vector<std::vector<T>> &send_data,
+                 std::vector<T> &recv_data, int send_proc = 0) {
     const auto size = MPI_size(comm);
     std::vector<int> pcounts(size);
-    for (size_t i = 0; i < size; ++i) {
-        pcounts[i] = send_data[i].size();
+    if(MPI_rank(comm) == send_proc) {
+        for (size_t i = 0; i < size; ++i) {
+            pcounts[i] = send_data[i].size();
+        }
     }
     MPI_broadcast(comm, pcounts, send_proc);
 
     std::vector<int> offsets(size + 1, 0);
-    for (size_t i = 1; i <= size; ++i) {
-        offsets[i] = offsets[i - 1] + pcounts[i - 1];
-    }
-    const size_t n = std::accumulate(pcounts.begin(), pcounts.end(), 0);
     std::vector<T> cache;
-    cache.resize(n);
-    for (size_t i = 0; i < size; ++i) {
-        std::copy(send_data[i].begin(), send_data[i].end(),
-                  cache.begin() + offsets[i]);
+    if(MPI_rank(comm) == send_proc) {
+        for (size_t i = 1; i <= size; ++i) {
+            offsets[i] = offsets[i - 1] + pcounts[i - 1];
+        }
+        const size_t n = std::accumulate(pcounts.begin(), pcounts.end(), 0);
+        cache.resize(n);
+        for (size_t i = 0; i < size; ++i) {
+            std::copy(send_data[i].begin(), send_data[i].end(),
+                    cache.begin() + offsets[i]);
+        }
     }
     recv_data.resize(pcounts[MPI_rank(comm)]);
     MPI_Scatterv(cache.data(), pcounts.data(), offsets.data(), MPI_type<T>(),
@@ -419,6 +423,7 @@ struct MPI_DataDistributor {
             }
         }
         MPI_scatter(comm, keys_send, keys_recv, root);
+        MPI_scatter(comm, values_send, values_recv, root);
     }
 };
 

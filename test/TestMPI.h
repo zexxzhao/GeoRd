@@ -5,6 +5,7 @@
 #include "../include/GeoRd.h"
 
 using namespace GeoRd;
+
 TEST(MPI, Basic) {
     int rank = details::MPI_rank();
     int size = details::MPI_size();
@@ -47,9 +48,16 @@ TEST(MPI, gather) {
     int root = 0;
     details::MPI_gather(MPI_COMM_WORLD, sendbuf, recvbuf, root);
 
+    if (rank != root) {
+        return;
+    }
+    int start = 0;
+    int stop = 0;
     for (int i = 0; i < size; ++i) {
-        for (int j = 0; j < size; ++j) {
-            ASSERT_EQ(recvbuf[i * (i + 1) / 2 + j], j);
+        start += i;
+        stop += i + 1;
+        for (int j = start; j < stop; ++j) {
+            ASSERT_EQ(recvbuf[j], i);
         }
     }
 }
@@ -59,7 +67,7 @@ TEST(MPI, scatter) {
     int size = details::MPI_size();
 
     std::vector<std::vector<int>> sendbuf(size);
-    std::vector<int> recvbuf(size);
+    std::vector<int> recvbuf(rank + 1);
 
     for (int i = 0; i < size; ++i) {
         sendbuf[i].resize(i + 1);
@@ -68,7 +76,6 @@ TEST(MPI, scatter) {
 
     int root = 0;
     details::MPI_scatter(MPI_COMM_WORLD, sendbuf, recvbuf, root);
-
     for (int i = 0; i < recvbuf.size(); ++i) {
         ASSERT_EQ(recvbuf[i], rank);
     }
@@ -78,19 +85,41 @@ TEST(MPI, Distributor) {
     int rank = details::MPI_rank();
     int size = details::MPI_size();
 
-    details::MPI_DataDistributor<int, int> distributor(MPI_COMM_WORLD);
+    int root = 0;
+    details::MPI_DataDistributor<int, int> distributor(MPI_COMM_WORLD, root);
     std::vector<int> keys_send(size);
-    std::vector<int> valye_send(size);
+    std::vector<int> value_send(size);
+    auto hash = [rank](int key) -> std::size_t {
+        return (((key + 7) * key) << 2) ^ (key + 31);
+    };
     for(int i = 0; i < size; ++i) {
-        keys_send[i] = i + rank;
-        valye_send[i] = i + rank;
+        auto key = i + rank;
+        keys_send[i] = key;
+        value_send[i] = hash(key);
     }
-    distributor.gather(keys_send, valye_send);
-    if(rank == 0) {
+    distributor.gather(keys_send, value_send);
+    if(rank == root) {
         for(int i = 0; i < distributor.keys.size(); ++i) {
-            ASSERT_EQ(distributor.keys[i], i);
-            ASSERT_EQ(distributor.values[i], i);
+            auto key = distributor.keys[i];
+            ASSERT_EQ(distributor.values[i], hash(key));
+            // printf("data[%d] = %d (%zu)\n", key, distributor.values[i], hash(key));
         }
+    }
+    auto hash2 = [rank](int key) -> std::size_t {
+        return ((2 * key + 7) << 2) & (key + 31);
+    };
+    if(rank == root) {
+        for(int i = 0; i < distributor.keys.size(); ++i) {
+            auto key = distributor.keys[i];
+            distributor.values[i] = hash2(key);
+        }
+    }
+    std::vector<int> key_recv;
+    std::vector<int> value_recv;
+    distributor.scatter(key_recv, value_recv);
+    for(int i = 0; i < key_recv.size(); ++i) {
+        auto key = key_recv[i];
+        ASSERT_EQ(value_recv[i], hash2(key));
     }
 }
 

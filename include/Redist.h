@@ -615,8 +615,7 @@ template <> struct Redistance<TetrahedronMesh> {
     std::vector<double> phi;
 
     Redistance(const VolumeMesh &mesh) : domain(mesh) {
-        get_vertex_connectivity_in_global_patch(mesh,
-                                                global_vertex_connectivity);
+        get_vertex_connectivity(mesh, global_vertex_connectivity);
     }
 
     //

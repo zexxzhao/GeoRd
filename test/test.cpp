@@ -1,6 +1,8 @@
 #include <iostream>
 
 #include "TestMPI.h"
+#include "TestGraph.h"
+#include "TestMesh.h"
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);

@@ -7,6 +7,9 @@
 *.o
 *.obj
 
+# Testing
+test/build/*
+
 # Precompiled Headers
 *.gch
 *.pch
