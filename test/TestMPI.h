@@ -1,8 +1,8 @@
 #ifndef __TEST_MPI_H__
 #define __TEST_MPI_H__
 
-#include "gtest-mpi-listener.h"
 #include "../include/GeoRd.h"
+#include "gtest-mpi-listener.h"
 
 using namespace GeoRd;
 
@@ -92,24 +92,25 @@ TEST(MPI, Distributor) {
     auto hash = [rank](int key) -> std::size_t {
         return (((key + 7) * key) << 2) ^ (key + 31);
     };
-    for(int i = 0; i < size; ++i) {
+    for (int i = 0; i < size; ++i) {
         auto key = i + rank;
         keys_send[i] = key;
         value_send[i] = hash(key);
     }
     distributor.gather(keys_send, value_send);
-    if(rank == root) {
-        for(int i = 0; i < distributor.keys.size(); ++i) {
+    if (rank == root) {
+        for (int i = 0; i < distributor.keys.size(); ++i) {
             auto key = distributor.keys[i];
             ASSERT_EQ(distributor.values[i], hash(key));
-            // printf("data[%d] = %d (%zu)\n", key, distributor.values[i], hash(key));
+            // printf("data[%d] = %d (%zu)\n", key, distributor.values[i],
+            // hash(key));
         }
     }
     auto hash2 = [rank](int key) -> std::size_t {
         return ((2 * key + 7) << 2) & (key + 31);
     };
-    if(rank == root) {
-        for(int i = 0; i < distributor.keys.size(); ++i) {
+    if (rank == root) {
+        for (int i = 0; i < distributor.keys.size(); ++i) {
             auto key = distributor.keys[i];
             distributor.values[i] = hash2(key);
         }
@@ -117,7 +118,7 @@ TEST(MPI, Distributor) {
     std::vector<int> key_recv;
     std::vector<int> value_recv;
     distributor.scatter(key_recv, value_recv);
-    for(int i = 0; i < key_recv.size(); ++i) {
+    for (int i = 0; i < key_recv.size(); ++i) {
         auto key = key_recv[i];
         ASSERT_EQ(value_recv[i], hash2(key));
     }

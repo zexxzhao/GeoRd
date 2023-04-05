@@ -2,11 +2,11 @@
 #define __GRAPH_H__
 
 #include <algorithm>
+#include <functional>
 #include <numeric>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
-#include <type_traits>
-
 namespace GeoRd {
 
 // Undirected graph
@@ -16,8 +16,8 @@ using DirectedGraph = std::unordered_map<Vertex, std::vector<Vertex>>;
 using Graph = DirectedGraph<std::size_t>;
 
 template <typename Vertex = std::size_t,
-          typename Graph = typename std::enable_if<std::is_arithmetic<Vertex>::value,
-                                          DirectedGraph<Vertex>>::type>
+          typename Graph = typename std::enable_if<
+              std::is_arithmetic<Vertex>::value, DirectedGraph<Vertex>>::type>
 void add_edge(Graph &graph, Vertex vertex_id, Vertex neighbor_id) {
     auto &neighbors = graph[vertex_id];
     if (std::find(neighbors.begin(), neighbors.end(), neighbor_id) ==
@@ -27,9 +27,10 @@ void add_edge(Graph &graph, Vertex vertex_id, Vertex neighbor_id) {
 }
 
 template <typename Vertex = std::size_t,
-          typename Graph = typename std::enable_if<std::is_arithmetic<Vertex>::value,
-                                          DirectedGraph<Vertex>>::type>
-void add_edge(Graph &graph, Vertex vertex_id, const std::vector<Vertex> &neighbor_ids) {
+          typename Graph = typename std::enable_if<
+              std::is_arithmetic<Vertex>::value, DirectedGraph<Vertex>>::type>
+void add_edge(Graph &graph, Vertex vertex_id,
+              const std::vector<Vertex> &neighbor_ids) {
     for (const auto &neighbor_id : neighbor_ids) {
         add_edge(graph, vertex_id, neighbor_id);
     }
@@ -37,8 +38,8 @@ void add_edge(Graph &graph, Vertex vertex_id, const std::vector<Vertex> &neighbo
 
 // serialize graph to a std::vector
 template <typename Vertex = std::size_t,
-          typename Graph = typename std::enable_if<std::is_arithmetic<Vertex>::value,
-                                          DirectedGraph<Vertex>>::type>
+          typename Graph = typename std::enable_if<
+              std::is_arithmetic<Vertex>::value, DirectedGraph<Vertex>>::type>
 void serialize_graph(const Graph &graph, std::vector<Vertex> &data) {
     data.clear();
     auto n_edges = std::accumulate(
@@ -57,8 +58,8 @@ void serialize_graph(const Graph &graph, std::vector<Vertex> &data) {
 
 // deserialize graph from a std::vector
 template <typename Vertex = std::size_t,
-          typename Graph = typename std::enable_if<std::is_arithmetic<Vertex>::value,
-                                          DirectedGraph<Vertex>>::type>
+          typename Graph = typename std::enable_if<
+              std::is_arithmetic<Vertex>::value, DirectedGraph<Vertex>>::type>
 void deserialize_graph(const std::vector<Vertex> &data, Graph &graph) {
     graph.clear();
     auto it = data.begin();
@@ -75,12 +76,13 @@ void deserialize_graph(const std::vector<Vertex> &data, Graph &graph) {
 // non recursive depth first search with additional restriction
 template <typename Vertex,
           typename Callable = std::function<bool(Vertex, Vertex)>,
-          typename Graph = typename std::enable_if<std::is_arithmetic<Vertex>::value,
-                                          DirectedGraph<Vertex>>::type>
+          typename Graph = typename std::enable_if<
+              std::is_arithmetic<Vertex>::value, DirectedGraph<Vertex>>::type>
 void dfs(
     const Graph &graph, Vertex vertex_id, std::vector<Vertex> &visited,
     Callable &&additional_restriction = [](Vertex, Vertex) { return true; }) {
-    if(graph.empty()) return;
+    if (graph.empty())
+        return;
     std::vector<Vertex> stack;
     stack.push_back(vertex_id);
     while (!stack.empty()) {
@@ -101,12 +103,13 @@ void dfs(
 // traverse the graph and collect connected components using DFS
 template <typename Vertex,
           typename Callable = std::function<bool(Vertex, Vertex)>,
-          typename Graph = typename std::enable_if<std::is_arithmetic<Vertex>::value,
-                                          DirectedGraph<Vertex>>::type>
+          typename Graph = typename std::enable_if<
+              std::is_arithmetic<Vertex>::value, DirectedGraph<Vertex>>::type>
 void connected_components(
     const Graph &graph, std::vector<std::vector<Vertex>> &components,
     Callable &&additional_restriction = [](Vertex, Vertex) { return true; }) {
-    if(graph.empty()) return;
+    if (graph.empty())
+        return;
     std::vector<bool> visited(graph.size(), 0);
     for (const auto &kv : graph) {
         if (not visited[kv.first]) {
@@ -123,8 +126,8 @@ void connected_components(
 // get the path from the source to the target
 template <typename Vertex,
           typename Callable = std::function<bool(Vertex, Vertex)>,
-          typename Graph = typename std::enable_if<std::is_arithmetic<Vertex>::value,
-                                          DirectedGraph<Vertex>>::type>
+          typename Graph = typename std::enable_if<
+              std::is_arithmetic<Vertex>::value, DirectedGraph<Vertex>>::type>
 void get_path(
     const Graph &graph, Vertex source, Vertex target, std::vector<Vertex> &path,
     Callable &&additional_restriction = [](Vertex, Vertex) { return true; }) {
@@ -138,7 +141,7 @@ void get_path(
         if (std::find(visited.begin(), visited.end(), vertex_id) ==
             visited.end()) {
             visited.push_back(vertex_id);
-            if (vertex_id == target) {  // check if the target is reached
+            if (vertex_id == target) { // check if the target is reached
                 break;
             }
             for (auto neighbor_id : graph.at(vertex_id)) {

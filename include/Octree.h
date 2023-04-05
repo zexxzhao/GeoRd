@@ -4,6 +4,7 @@
 #include <array>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace GeoRd {
@@ -31,7 +32,7 @@ template <int D = Dim::value> struct Node {
     std::array<int, n_child<D>> vertex;
 };
 
-template<int D = Dim::value> struct TreeNode {
+template <int D = Dim::value> struct TreeNode {
     std::vector<int> plist;
     std::vector<TreeNode> child;
     std::array<int, n_child<D>> child_exist;
@@ -141,8 +142,10 @@ Box3D build_bounding_box(PointIT begin, PointIT end, double box_tol = 1e-6) {
         });
 
     // build the bounding box
-    Point3D p0{(*xmin)[0] - box_tol, (*ymin)[1] - box_tol, (*zmin)[2] - box_tol};
-    Point3D p1{(*xmax)[0] + box_tol, (*ymax)[1] + box_tol, (*zmax)[2] + box_tol};
+    Point3D p0{(*xmin)[0] - box_tol, (*ymin)[1] - box_tol,
+               (*zmin)[2] - box_tol};
+    Point3D p1{(*xmax)[0] + box_tol, (*ymax)[1] + box_tol,
+               (*zmax)[2] + box_tol};
     return Box3D{p0, p1};
 }
 
@@ -230,7 +233,6 @@ inline double compute_min_dist(Box3D box, Point3D x) {
 }
 
 } // namespace details
-
 
 template <typename = void, int = 0> struct Octree {};
 
@@ -336,8 +338,6 @@ template <int _Tag> struct Octree<Point3D, _Tag> {
     }
 };
 
-#include <unordered_map>
-
 // for triangles
 template <int _Tag> class Octree<Triangle3D, _Tag> {
     Box3D box_cor;
@@ -422,7 +422,6 @@ template <int _Tag> class Octree<Triangle3D, _Tag> {
                   << this->box_cor.box_pos[1].z() << std::endl;
     }
 };
-
 
 } // namespace GeoRd
 #endif // __OCTREE_H__

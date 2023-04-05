@@ -1,17 +1,16 @@
 #ifndef __MPI_H__
 #define __MPI_H__
+#include "utils.h"
 #include <iostream>
+#include <mpi.h>
 #include <numeric>
 #include <vector>
-
-#include <mpi.h>
-#include "utils.h"
 #define varname(name, line) name##line
 #ifndef warning
 #define warning(...)                                                           \
     do {                                                                       \
-        int varname(rank, __LINE__) = details::MPI_rank(MPI_COMM_WORLD);                \
-        int varname(size, __LINE__) = details::MPI_size(MPI_COMM_WORLD);                \
+        int varname(rank, __LINE__) = details::MPI_rank(MPI_COMM_WORLD);       \
+        int varname(size, __LINE__) = details::MPI_size(MPI_COMM_WORLD);       \
         fprintf(stderr,                                                        \
                 "********************************************************"     \
                 "***************\n");                                          \
@@ -30,8 +29,8 @@
 #ifndef error
 #define error(...)                                                             \
     do {                                                                       \
-        int varname(rank, __LINE__) = details::MPI_rank(MPI_COMM_WORLD);                \
-        int varname(size, __LINE__) = details::MPI_size(MPI_COMM_WORLD);                \
+        int varname(rank, __LINE__) = details::MPI_rank(MPI_COMM_WORLD);       \
+        int varname(size, __LINE__) = details::MPI_size(MPI_COMM_WORLD);       \
         fprintf(stderr,                                                        \
                 "********************************************************"     \
                 "***************\n");                                          \
@@ -48,18 +47,13 @@
     } while (0)
 #endif
 
-
 namespace GeoRd {
 namespace details {
 
 struct MPI_Base {
-    MPI_Base(int argc, char **argv) {
-        MPI_Init(&argc, &argv);
-    }
+    MPI_Base(int argc, char **argv) { MPI_Init(&argc, &argv); }
 
-    ~MPI_Base() {
-        MPI_Finalize();
-    }
+    ~MPI_Base() { MPI_Finalize(); }
 };
 
 inline void init(int argc, char **argv) {
@@ -127,8 +121,9 @@ void MPI_gather(MPI_Comm comm, const std::vector<T> &in, std::vector<T> &out,
 
 // For Point3D
 template <typename T>
-auto MPI_gather(MPI_Comm comm, const std::vector<T> &in,
-                std::vector<T> &out, int recv_proc) -> typename std::enable_if<details::Subscriptable<T>::value>::type {
+auto MPI_gather(MPI_Comm comm, const std::vector<T> &in, std::vector<T> &out,
+                int recv_proc) ->
+    typename std::enable_if<details::Subscriptable<T>::value>::type {
     using DataType = typename T::AtomizedType;
     std::vector<DataType> in_data, out_data;
     in_data.reserve(in.size() * 3);
@@ -147,7 +142,7 @@ auto MPI_gather(MPI_Comm comm, const std::vector<T> &in,
 
 template <typename T>
 void MPI_allgather(MPI_Comm comm, const std::vector<T> &in,
-                    std::vector<T> &out) {
+                   std::vector<T> &out) {
     const auto size = MPI_size(comm);
     std::vector<int> pcounts(size);
     int local_size = in.size();
@@ -165,7 +160,7 @@ void MPI_allgather(MPI_Comm comm, const std::vector<T> &in,
 
 template <typename T>
 void MPI_allgather(MPI_Comm comm, const std::vector<T> &in,
-                    std::vector<std::vector<T>> &out) {
+                   std::vector<std::vector<T>> &out) {
     const auto size = MPI_size(comm);
     std::vector<int> pcounts(size);
     int local_size = in.size();
@@ -201,7 +196,7 @@ void MPI_scatter(MPI_Comm comm, const std::vector<std::vector<T>> &send_data,
                  std::vector<T> &recv_data, int send_proc = 0) {
     const auto size = MPI_size(comm);
     std::vector<int> pcounts(size);
-    if(MPI_rank(comm) == send_proc) {
+    if (MPI_rank(comm) == send_proc) {
         for (size_t i = 0; i < size; ++i) {
             pcounts[i] = send_data[i].size();
         }
@@ -210,7 +205,7 @@ void MPI_scatter(MPI_Comm comm, const std::vector<std::vector<T>> &send_data,
 
     std::vector<int> offsets(size + 1, 0);
     std::vector<T> cache;
-    if(MPI_rank(comm) == send_proc) {
+    if (MPI_rank(comm) == send_proc) {
         for (size_t i = 1; i <= size; ++i) {
             offsets[i] = offsets[i - 1] + pcounts[i - 1];
         }
@@ -218,7 +213,7 @@ void MPI_scatter(MPI_Comm comm, const std::vector<std::vector<T>> &send_data,
         cache.resize(n);
         for (size_t i = 0; i < size; ++i) {
             std::copy(send_data[i].begin(), send_data[i].end(),
-                    cache.begin() + offsets[i]);
+                      cache.begin() + offsets[i]);
         }
     }
     recv_data.resize(pcounts[MPI_rank(comm)]);
@@ -346,11 +341,12 @@ void MPI_alltoall(MPI_Comm comm, const std::vector<std::vector<T>> &in,
                   comm);
 }
 
-template <
-    typename Key, typename Value, typename Hash = std::hash<Key>,
-    typename KeyEqual = std::equal_to<Key>>
+template <typename Key, typename Value, typename Hash = std::hash<Key>,
+          typename KeyEqual = std::equal_to<Key>>
 struct MPI_DataDistributor {
-    static_assert(std::is_arithmetic<Key>::value and std::is_arithmetic<Value>::value, "Key and Value must be arithmetic types.");
+    static_assert(std::is_arithmetic<Key>::value and
+                      std::is_arithmetic<Value>::value,
+                  "Key and Value must be arithmetic types.");
     template <typename T = Value>
     using Map = std::unordered_map<Key, T, Hash, KeyEqual>;
 

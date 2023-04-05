@@ -1,12 +1,12 @@
 #ifndef __REDIS_H__
 #define __REDIS_H__
-#include "utils.h"
 #include "Mesh.h"
 #include "Octree.h"
-#include <set>
+#include "utils.h"
 #include <fstream>
-#include <iostream>
 #include <ios>
+#include <iostream>
+#include <set>
 #include <unordered_map>
 namespace GeoRd {
 
@@ -79,7 +79,7 @@ void write_triangulation(
  * @param[out] tri_con_tmp connectivity list of the triangle
  * @param[in] phival scalar function value of the tetrahedral mesh
  */
-template<typename VolumeMesh>
+template <typename VolumeMesh>
 void compute_triangle_winding_in_tetrahedron(
     const std::vector<Point3D> &phi_vertex,
     const std::vector<Point3D> &phi_tet_vertex, std::vector<int> &tri_con_tmp,
@@ -145,8 +145,10 @@ int compute_diagonal_direction(std::vector<Point3D> &phi_tmp_vertex) {
 
 // Adding triangle
 // 1 triangle or 2 triangles
-template <typename VolumeMesh, typename LevelSetValueType = double, typename IntegerType = int>
-void add_triangle(const VolumeMesh &mesh, const std::vector<LevelSetValueType> &phid0,
+template <typename VolumeMesh, typename LevelSetValueType = double,
+          typename IntegerType = int>
+void add_triangle(const VolumeMesh &mesh,
+                  const std::vector<LevelSetValueType> &phid0,
                   std::vector<Point3D> &phi_vertex,
                   std::vector<IntegerType> &phi_connect) {
     // std::vector<Point>             phi_tmp_vertex;
@@ -178,7 +180,8 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<LevelSetValueType> &
         // std::vector<int>().swap(phi_pos);
         // std::vector<int>().swap(phi_neg);
         std::vector<Point3D> phi_tmp_vertex;
-        // typename VolumeMesh::Element::template VertexArray<Point3D> phi_tet_vertex;
+        // typename VolumeMesh::Element::template VertexArray<Point3D>
+        // phi_tet_vertex;
         std::vector<Point3D> phi_tet_vertex;
         std::vector<int> phi_pos, phi_neg;
 
@@ -256,8 +259,8 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<LevelSetValueType> &
             }
 
             // Fix winding problem
-            compute_triangle_winding_in_tetrahedron<VolumeMesh>(phi_vertex, phi_tet_vertex,
-                                                    tri_con_tmp, phival);
+            compute_triangle_winding_in_tetrahedron<VolumeMesh>(
+                phi_vertex, phi_tet_vertex, tri_con_tmp, phival);
 
             // add triangle
             // phi_connect.push_back(tri_con_tmp);
@@ -336,14 +339,14 @@ void add_triangle(const VolumeMesh &mesh, const std::vector<LevelSetValueType> &
     }
 }
 
-
-void filter_point(std::vector<double> &vx_res, std::vector<double> &vy_res,
-                  std::vector<double> &vz_res,
-                  std::vector<double> &vertex_nor_x,
-                  std::vector<double> &vertex_nor_y,
-                  std::vector<double> &vertex_nor_z,
-                  const std::vector<double> &vertex_nor_num,
-                  const std::vector<double> &vertex_nor_area) {
+inline void filter_point(std::vector<double> &vx_res,
+                         std::vector<double> &vy_res,
+                         std::vector<double> &vz_res,
+                         std::vector<double> &vertex_nor_x,
+                         std::vector<double> &vertex_nor_y,
+                         std::vector<double> &vertex_nor_z,
+                         const std::vector<double> &vertex_nor_num,
+                         const std::vector<double> &vertex_nor_area) {
     int num = vx_res.size();
 
     std::vector<double> vx_new;
@@ -479,7 +482,8 @@ void compute_normal(
 }
 
 // clean the triangles
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+template <typename T,
+          typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
 void clean_triangles(std::vector<Point3D> &vertices, std::vector<T> &elements) {
 
     // remove duplicate vertices
@@ -508,7 +512,7 @@ void clean_triangles(std::vector<Point3D> &vertices, std::vector<T> &elements) {
 
     // update triangle indices following the new vertex indices
     decltype(triangle_set) new_triangle_set;
-    for(auto &t : triangle_set){
+    for (auto &t : triangle_set) {
         auto copy = t;
         copy[0] = vertex_map.at(vertices[copy[0]]);
         copy[1] = vertex_map.at(vertices[copy[1]]);
@@ -611,8 +615,6 @@ template <> struct Redistance<TetrahedronMesh> {
     };
     Representation representation;
     Graph global_vertex_connectivity;
-    std::vector<double> scalar_field;
-    std::vector<double> phi;
 
     Redistance(const VolumeMesh &mesh) : domain(mesh) {
         get_vertex_connectivity(mesh, global_vertex_connectivity);
@@ -622,20 +624,28 @@ template <> struct Redistance<TetrahedronMesh> {
     void init(const std::vector<double> &phid0,
               int small_droplet_tolerance = 100) {
         // Gather the levelset function
-        details::MPI_DataDistributor<std::size_t, double> dist(MPI_COMM_WORLD);
+        int root = 0;
+        details::MPI_DataDistributor<std::size_t, double> dist(MPI_COMM_WORLD,
+                                                               root);
         std::vector<std::size_t> gid;
         for (int ivtx = 0; ivtx < domain.vertices.size(); ivtx++) {
             gid.push_back(domain.vertex_local2global[ivtx]);
         }
-        phi = phid0;
+        std::vector<double> phi = phid0;
         dist.gather(gid, phi);
-        scalar_field = dist.values;
         // flip the sign of the levelset function in small droplets
-        if (details::MPI_rank() == 0) {
+        if (details::MPI_rank() == root) {
             std::vector<std::vector<std::size_t>> volume_components;
-            overwrite_small_droplets(small_droplet_tolerance,
-                                     volume_components);
-            // TODO: assign signs to scalar_field
+            std::vector<int> sign;
+            overwrite_small_droplets(dist.values, small_droplet_tolerance,
+                                     volume_components, sign);
+            // assign signs to the level set field
+            for (int i = 0; i < volume_components.size(); ++i) {
+                for (int j = 0; j < volume_components[i].size(); ++j) {
+                    auto &v = dist.values[volume_components[i][j]];
+                    v = sign[i] * std::abs(v);
+                }
+            }
         }
         dist.scatter(gid, phi);
 
@@ -676,8 +686,11 @@ template <> struct Redistance<TetrahedronMesh> {
         }
     }
 
-    void overwrite_small_droplets(
-        int num_tol, std::vector<std::vector<std::size_t>> &components) {
+    void
+    overwrite_small_droplets(const std::vector<double> &scalar_field,
+                             int num_tol,
+                             std::vector<std::vector<std::size_t>> &components,
+                             std::vector<int> &sign) {
 
         int rankvalues = details::MPI_rank(MPI_COMM_WORLD);
         if (rankvalues) {
@@ -689,8 +702,8 @@ template <> struct Redistance<TetrahedronMesh> {
                                  return scalar_field[i] * scalar_field[j] > 0.0;
                              });
         for (int i = 0; i < components.size(); i++) {
-            std::cout << "    Volume color " << i << " number: " << components[i].size()
-                      << std::endl;
+            std::cout << "    Volume color " << i
+                      << " number: " << components[i].size() << std::endl;
         }
         // get inter-patch connectivity
         std::vector<std::vector<std::size_t>> inter_patch_connectivity;
@@ -745,6 +758,15 @@ template <> struct Redistance<TetrahedronMesh> {
                                             return c.empty();
                                         }),
                          components.end());
+        // assign the sign to the scalar field
+        sign.resize(components.size());
+        for (std::size_t i = 0; i < components.size(); ++i) {
+            double sum = 0.0;
+            for (const auto &v : components[i]) {
+                sum += scalar_field[v];
+            }
+            sign[i] = (sum > 0.0 ? 1 : -1);
+        }
     }
 
     //
@@ -772,7 +794,7 @@ template <> struct Redistance<TetrahedronMesh> {
             for (int j = i + 1; j < representative_vertex.size(); ++j) {
                 std::vector<std::size_t> path;
                 get_path(vertex_connectivity, representative_vertex[i],
-                                  representative_vertex[j], path);
+                         representative_vertex[j], path);
                 if (path.size() > 0) {
                     inter_patch_connectivity[i].push_back(j);
                     inter_patch_connectivity[j].push_back(i);

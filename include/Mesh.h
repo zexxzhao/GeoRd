@@ -14,8 +14,7 @@ struct ElementProperty {
     static constexpr T n_vertices = t0;
     static constexpr T n_edges = t1;
     static constexpr T n_faces = t2;
-    template<typename U>
-    using VertexArray = std::array<U, n_vertices>;
+    template <typename U> using VertexArray = std::array<U, n_vertices>;
 };
 
 using Point = ElementProperty<int, 0, 1, 0, 0>;
@@ -55,8 +54,8 @@ struct Mesh {
     }
 };
 
-
-template <typename Mesh, typename std::enable_if<not Mesh::is_shared, int>::type = 0>
+template <typename Mesh,
+          typename std::enable_if<not Mesh::is_shared, int>::type = 0>
 void get_vertex_connectivity(const Mesh &mesh, Graph &graph) {
     graph.clear();
     using Elem = typename Mesh::Element;
@@ -80,7 +79,6 @@ void get_vertex_connectivity(const Mesh &mesh, Graph &graph) {
     }
 }
 
-
 template <typename Elem, int D>
 struct Mesh<Elem, D, Layout::Distributed> : public Mesh<Elem, D> {
     using Element = Elem;
@@ -93,10 +91,9 @@ struct Mesh<Elem, D, Layout::Distributed> : public Mesh<Elem, D> {
     std::vector<std::size_t> element_local2global;
 };
 
-
-template <typename Mesh, typename std::enable_if<Mesh::is_shared, int>::type = 0>
-void get_vertex_connectivity_in_local_patch(
-    const Mesh &mesh, Graph &graph) {
+template <typename Mesh,
+          typename std::enable_if<Mesh::is_shared, int>::type = 0>
+void get_vertex_connectivity_in_local_patch(const Mesh &mesh, Graph &graph) {
     graph.clear();
     Graph local_graph;
     get_vertex_connectivity<typename Mesh::ExclusiveMesh>(mesh, local_graph);
@@ -110,9 +107,9 @@ void get_vertex_connectivity_in_local_patch(
 }
 
 #include "MPI.h"
-template <typename Mesh, typename std::enable_if<Mesh::is_shared, int>::type = 0>
-void get_vertex_connectivity_in_global_patch(
-    const Mesh &mesh, Graph &graph) {
+template <typename Mesh,
+          typename std::enable_if<Mesh::is_shared, int>::type = 0>
+void get_vertex_connectivity_in_global_patch(const Mesh &mesh, Graph &graph) {
     get_vertex_connectivity_in_local_patch(mesh, graph);
     // serialize graph
     std::vector<size_t> data;
@@ -130,11 +127,11 @@ void get_vertex_connectivity_in_global_patch(
     }
 }
 
-template <typename Mesh, typename std::enable_if<Mesh::is_shared, int>::type = 0>
+template <typename Mesh,
+          typename std::enable_if<Mesh::is_shared, int>::type = 0>
 void get_vertex_connectivity(const Mesh &mesh, Graph &graph) {
     get_vertex_connectivity_in_global_patch(mesh, graph);
 }
-
 
 } // namespace GeoRd
 

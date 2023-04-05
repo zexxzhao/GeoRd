@@ -1,8 +1,8 @@
 #ifndef __TEST_GRAPH_H__
 #define __TEST_GRAPH_H__
 
-#include "gtest-mpi-listener.h"
 #include "../include/GeoRd.h"
+#include "gtest-mpi-listener.h"
 
 using namespace GeoRd;
 
@@ -25,10 +25,12 @@ TEST(Graph, serialization) {
     serialize_graph(g, ar);
     Graph g2;
     deserialize_graph(ar, g2);
-    for(const auto &kv : g) {
+    for (const auto &kv : g) {
         ASSERT_EQ(kv.second.size(), g2.at(kv.first).size());
-        for(const auto &v : kv.second) {
-            ASSERT_TRUE(std::find(g2.at(kv.first).begin(), g2.at(kv.first).end(), v) != g2.at(kv.first).end());
+        for (const auto &v : kv.second) {
+            ASSERT_TRUE(std::find(g2.at(kv.first).begin(),
+                                  g2.at(kv.first).end(),
+                                  v) != g2.at(kv.first).end());
         }
     }
 }
@@ -76,12 +78,13 @@ TEST(Graph, traverse) {
 }
 
 TEST(Graph, ConnectedComponents) {
-    if(details::MPI_rank() != 0) return;
+    if (details::MPI_rank() != 0)
+        return;
     Graph g;
     generate_undirected_graph(g);
     std::vector<std::vector<std::size_t>> components;
     connected_components(g, components);
-    auto hash_vector = [](const std::vector<std::size_t>& a) {
+    auto hash_vector = [](const std::vector<std::size_t> &a) {
         std::hash<std::size_t> h;
         std::size_t key = 0;
         for (int i = 0; i < a.size(); ++i) {
@@ -100,19 +103,22 @@ TEST(Graph, ConnectedComponents) {
         expected_key.push_back(hash_vector(c));
     }
     ASSERT_EQ(component_key.size(), expected_key.size());
-    for (auto key: component_key) {
-        ASSERT_TRUE(std::find(expected_key.begin(), expected_key.end(), key) != expected_key.end());
+    for (auto key : component_key) {
+        ASSERT_TRUE(std::find(expected_key.begin(), expected_key.end(), key) !=
+                    expected_key.end());
     }
 }
 
 TEST(Graph, GetPath) {
-    if(details::MPI_rank() != 0) return;
+    if (details::MPI_rank() != 0)
+        return;
     Graph g;
     generate_undirected_graph(g);
     std::vector<std::size_t> path;
     get_path(g, static_cast<std::size_t>(0), static_cast<std::size_t>(3), path);
     // Expected path: [0, 1, 3]
-    std::vector<std::vector<std::size_t>> possible_path = {{0, 1, 3}, {0, 2, 3}};
+    std::vector<std::vector<std::size_t>> possible_path = {{0, 1, 3},
+                                                           {0, 2, 3}};
     // Check if path is one of the possible path
     bool found = false;
     for (const auto &p : possible_path) {

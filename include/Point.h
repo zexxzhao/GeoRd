@@ -1,9 +1,8 @@
 #ifndef __POINT_H__
 #define __POINT_H__
+#include "MPI.h"
 #include <array>
 #include <cmath>
-#include "MPI.h"
-
 
 namespace GeoRd {
 
